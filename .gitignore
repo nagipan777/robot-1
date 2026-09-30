@@ -1,0 +1,38 @@
+# Python environments and caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# Local datasets and generated training output
+taco_dataset/
+dirt_dataset/
+runs/
+taco_colab.zip
+
+# Model weights and detector exports
+*.pt
+*.pth
+*.onnx
+*.engine
+
+# ROS / colcon build output
+build/
+install/
+log/
+
+# Local runtime files
+*.cache
+*.log
+*.pid
+
+# Editors and operating systems
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~

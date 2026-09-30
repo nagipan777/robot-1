@@ -1,0 +1,28 @@
+vision_turn_controller:
+  ros__parameters:
+    # Both flags must remain false until image pixels and odom coordinates are calibrated.
+    control_enabled: false
+    calibration_ready: false
+
+    # Simulation: nav_msgs/msg/Odometry. For ArUco, use pose_stamped and a
+    # geometry_msgs/msg/PoseStamped topic expressed in the calibrated world frame.
+    pose_source: odom
+    pose_topic: /odom
+
+    detections_topic: /webcam/detections
+    cmd_vel_topic: /cmd_vel_unstamped
+    target_label: litter
+    target_frame: odom
+    target_topic: /litter/target
+    target_marker_topic: /litter/target_marker
+    reached_topic: /litter/reached
+
+    # Row-major 3x3 image-pixel -> odom-plane homography. Identity is a placeholder.
+    image_to_odom_homography: [0.0002037969914, -0.007835779434, 8.224998242, -0.003312295878, 0.0008470813973, 1.203999289, 0.0001697243854, 0.0009283285262, 1.0]
+    calibration_image_width: 0
+    calibration_image_height: 0
+    angular_gain: 1.2
+    max_angular_speed: 0.8
+    angle_tolerance: 0.08
+    arrival_distance: 0.15
+    input_timeout: 1.0

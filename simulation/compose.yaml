@@ -1,0 +1,15 @@
+name: robot-create3
+services:
+  simulator:
+    build: .
+    image: robot-create3:jazzy-harmonic
+    platform: linux/arm64
+    ports:
+      - "127.0.0.1:6080:6080"
+      - "127.0.0.1:8765:8765"
+    shm_size: 512m
+    environment:
+      ROS_DOMAIN_ID: "33"
+      ROS_AUTOMATIC_DISCOVERY_RANGE: LOCALHOST
+    init: true
+    stop_grace_period: 20s
