@@ -1,5 +1,7 @@
 # robot-1 チュートリアル
 
+PAI最終課題のROS 2動画を撮影する場合は、ベースライン、推奨画面配置、トピック確認、段階的な制御有効化、停止手順をまとめた[PAI_SUBMISSION.md](PAI_SUBMISSION.md)を先に確認してください。
+
 固定Webカメラでごみを検出し、カメラ画像上の座標をGazeboの床面座標へ変換して、Create 3シミュレーター上で確認するプロジェクトです。
 
 このチュートリアルでは、次の順番で安全に動作確認します。
@@ -15,18 +17,25 @@
 
 ## 1. 構成
 
+固定WebカメラとYOLOはMac側、ROS 2・Gazebo・Create 3はColima/Docker側で動きます。
+
 ```text
-Webカメラ
-  └─ vision.py（YOLO）
-       └─ HTTP → シミュレーター
-                    └─ /webcam/detections（std_msgs/msg/String、JSON）
-                         └─ vision_turn_controller
-                              ├─ /odom（ロボット姿勢）
-                              ├─ /litter/target（変換後の目標点）
-                              ├─ /litter/target_marker（RViz Marker）
-                              ├─ /litter/reached（到達判定）
-                              └─ /cmd_vel_unstamped（現在は出力無効）
+Webカメラ → vision.py → HTTP → /webcam/detections
+                                      ↓
+                         /litter/target_odom ─┐
+                                             ├→ map_frame_adapter
+                                      /odom ─┘        │
+                              /robot/pose (map) ──────┤
+                            /litter/target (map) ─────┘
+                                             ↓
+                                vision_turn_controller
+                                             ↓
+                             /cmd_vel_unstamped
+                                      ↓
+                        TwistStamped relay → Create 3 / Gazebo
 ```
+
+プロセス境界、全トピック、座標系、安全条件、シミュレーターと実機の差し替え方は[ARCHITECTURE.md](ARCHITECTURE.md)にまとめています。
 
 現在のごみ表示は`visualization_msgs/msg/Marker`を使った**RViz上の可視化**です。Gazebo内に物理的なごみモデルを生成する機能ではありません。シミュレーターでの「吸引」は、目標から15 cm以内に入ったとき`/litter/reached`が`true`になる到達判定として扱います。
 
@@ -206,7 +215,79 @@ RVizでは`/litter/target_marker`にオレンジ色の球が表示されます�
 
 校正時と運用時で画像解像度が異なる場合、変換結果は安全のため破棄されます。カメラの位置・向き・高さ・画角を変えた場合も、必ず再校正してください。
 
-## 9. ロボットを手動で動かす
+## 9. シミュレーターで目標追従を確認する
+
+追従制御は`map`座標系の`/litter/target`と`/robot/pose`を購読し、`/cmd_vel_unstamped`へ速度指令を送ります。最初に旋回だけを確認し、問題がなければ低速前進へ切り替えます。実機では実行しないでください。
+
+最初のターミナルでYOLOを動かし、障害物のない床面にごみを置きます。
+
+```bash
+source .venv/bin/activate
+python vision.py --preview
+```
+
+別のターミナルからコンテナへ入り、校正済みであることと制御モードを明示してから、最後に制御を有効にします。
+
+```bash
+./simulation/sim.sh shell
+
+ros2 param set /vision_turn_controller calibration_ready true
+ros2 param set /vision_turn_controller control_mode turn_only
+ros2 param set /vision_turn_controller control_enabled true
+```
+
+### 9.1 旋回だけを確認する
+
+`turn_only`では`linear.x`を常に0に保ち、目標方向への旋回だけを行います。別のコンテナシェルで指令を確認できます。
+
+```bash
+ros2 topic echo /cmd_vel_unstamped
+```
+
+次を確認してください。
+
+- `linear.x`が常に`0.0`
+- ごみを左右へ動かすと`angular.z`の符号が変わる
+- ロボットが目標方向を向くと`angular.z`が`0.0`になる
+- ごみを画面から外すと、1秒以内にゼロ速度になる
+
+### 9.2 障害物のない範囲で低速前進する
+
+旋回確認後、ロボットから目標までの直線上にドックや障害物がないことをGazeboで確認します。その後、制御モードだけを切り替えます。
+
+```bash
+ros2 param set /vision_turn_controller control_mode approach
+```
+
+`approach`では、目標との向きのずれが0.15 rad以内のときだけ、最大0.08 m/sで前進します。向きが大きくずれた場合は前進せず、旋回を優先します。目標から15 cm以内へ入ると停止し、次が`true`になります。
+
+```bash
+ros2 topic echo /litter/reached
+```
+
+### 9.3 停止する
+
+通常停止では、別のコンテナシェルで先に速度指令を監視します。
+
+```bash
+ros2 topic echo /cmd_vel_unstamped
+```
+
+その状態で、制御を実行しているシェルから無効化します。ノードがゼロ速度を送信したことを監視側で確認し、`Ctrl+C`で監視を終了します。
+
+```bash
+ros2 param set /vision_turn_controller control_enabled false
+```
+
+緊急時は、コンテナ内の別ターミナルからゼロ速度を送れます。
+
+```bash
+ros2 topic pub --once /cmd_vel_unstamped geometry_msgs/msg/Twist '{}'
+```
+
+`/litter/target`または`/robot/pose`が1秒より古くなった場合、検出が消えた場合、目標へ到達した場合、ノード終了時にもゼロ速度を送ります。
+
+## 10. ロボットを手動で動かす
 
 自動走行を有効にせず、キーボード操作で座標と到達判定を確認できます。
 
@@ -216,7 +297,7 @@ RVizでは`/litter/target_marker`にオレンジ色の球が表示されます�
 
 操作方法はターミナルに表示されます。ごみ目標へ15 cm以内まで近づくと、`/litter/reached`が`true`になります。
 
-## 10. 終了する
+## 11. 終了する
 
 カメラ画面では`q`を押して終了します。シミュレーターは用途に応じて停止します。
 
@@ -264,15 +345,83 @@ RVizでは`/litter/target_marker`にオレンジ色の球が表示されます�
 
 ## 実機へ移行するとき
 
-シミュレーターではロボット姿勢として`/odom`を使います。実機ではルンバ上面のArUcoマーカーを固定Webカメラで検出し、校正済み世界座標系の`geometry_msgs/msg/PoseStamped`として渡す想定です。
+シミュレーターでは`/odom`を数値変換し、`map`座標系の`/robot/pose`（`geometry_msgs/msg/PoseStamped`）として制御へ渡します。ごみ位置も同じ変換を通った`/litter/target`（`PointStamped`、frame=`map`）です。
 
-その際は`simulation/vision_controller.yaml`で`pose_source: pose_stamped`へ変更し、`pose_topic`にArUco姿勢トピックを指定します。画像座標から床面座標への変換と目標計算は共通で利用できます。
+実機ではルンバ上面のArUcoマーカーを固定Webカメラで検出し、同じ`/robot/pose`へ差し替える想定です。画像座標から床面座標への変換と目標計算は共通で利用できます。
+
+### Roomba 680 USB-UARTドライバ
+
+MacとRoomba 680をFLINT FT232RLで接続し、Roomba側TXD→FLINT RXD、Roomba側RXD→FLINT TXD、GNDを共通にします。電圧レベルとMini-DINのピン配置を確認してから接続してください。既定ポートは`/dev/cu.usbserial-A10QJ1R4`、通信は19200 bps、8N1です。
+
+実行前にRoombaの`CLEAN`ボタンを押し、ランプが点灯して本体が起きていることを確認してください。ドライバはFT232RLの安定待ち後にStartを3回送ってからSafeモードを要求します。
+
+```bash
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+python roomba_driver.py
+python roomba_driver.py --port /dev/cu.usbserial-A10QJ1R4
+```
+
+既定のCLIはSafeモードを確認して左右エンコーダを読むだけで、車輪を駆動しません。障害物のない場所で本体を床に置き、直ちに停止できる状態を確保した場合だけ、明示的に短時間の走行試験を有効にします。この試験は左右30 mm/sで0.5秒間だけ前進し、終了時にも停止指令を送ります。
+
+実機オドメトリを読み取りだけで確認する場合は、初回値を基準として0.5秒間隔で10回測定します。左右の生値、差分tick、推定姿勢が表示され、受信エラー時は姿勢を更新せず中断します。
+
+```bash
+python roomba_driver.py --odom-test
+```
+
+```bash
+python roomba_driver.py --drive-test
+```
+
+`RoombaDriver`の速度上限は既定で±50 mm/sです。OI Safeモード（センサID 35）が確認できなければ走行を拒否し、通信エラー、監視タイムアウト、`close()`、context manager終了時には可能な範囲で停止指令を送ります。Safeモードの車輪落下・崖検出等の保護は無効化しません。
+
+ただし、Drive Directの速度指令はホストプロセスが停止すると更新も停止指令も送れません。ドライバの監視タイムアウトはプロセスとUARTが動作している間だけ有効であり、プロセス強制終了、USB抜去、OS停止時の確実な停止は保証しません。実運用では物理的な非常停止、電源遮断手段、監督プロセスを別途用意してください。
+
+単体テストは実機へ接続せず、注入した偽シリアルで実行できます。
+
+```bash
+python -m unittest -v tests.test_odometry tests.test_roomba_driver
+```
+
+ドライバ内のオドメトリは、最初のエンコーダ読み取りを基準値とし、2回目以降に姿勢を更新します。単位は位置がm、角度がradです。
+
+```python
+with RoombaDriver() as driver:
+    driver.read_odometry()  # 左右エンコーダの基準値を設定
+    pose = driver.read_odometry()
+    print(pose.x, pose.y, pose.theta)
+```
+
+### Roomba通信前のdry-run確認
+
+実機へは送信せず、`/cmd_vel_unstamped`を左右輪速度へ変換して確認できます。シミュレーターのコンテナシェルで起動します。
+
+```bash
+/usr/local/bin/roomba-dry-run-adapter
+```
+
+別のコンテナシェルで、`[左輪 mm/s, 右輪 mm/s]`の順に確認します。
+
+```bash
+ros2 topic echo /roomba/wheel_speeds_dry_run
+```
+
+- 前進では左右輪が同じ値になります。
+- 正の`angular.z`（左旋回）では右輪が左輪より速くなります。
+- 100 mm/sを超える場合は、左右輪を同じ倍率で縮小します。
+- 指令が0.5秒途絶えると`[0.0, 0.0]`を配信し、古い値を再利用しません。
+- `Ctrl+C`で終了するときも`[0.0, 0.0]`を配信します。
 
 ## 主なファイル
 
+- `roomba_driver.py`: Roomba 680のSafeモードUARTドライバと実機試験CLI
+- `odometry.py`: 16bitエンコーダの折り返しに対応した差動二輪オドメトリ
 - `vision.py`: Webカメラ画像のYOLO推論とJSON送信
 - `calibrate_floor.py`: 4点クリックによる床面ホモグラフィ校正
 - `simulation/vision_turn_controller.py`: 検出座標の変換、Marker、到達判定、速度指令
+- `simulation/map_frame_adapter.py`: `odom`から`map`への姿勢・目標変換と静的TF
+- `simulation/roomba_dry_run_adapter.py`: 左右輪速度への変換と通信途絶停止の検証
 - `simulation/vision_controller.yaml`: 校正値と安全設定
 - `simulation/sim.sh`: シミュレーターの起動・停止・確認コマンド
 - `prepare_taco.py`: TACOデータセットの取得とYOLO形式への変換

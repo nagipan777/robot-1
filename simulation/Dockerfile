@@ -20,12 +20,18 @@ COPY worlds/room.sdf /opt/create3_ws/install/irobot_create_gz_bringup/share/irob
 COPY supervisord.conf /etc/supervisor/conf.d/create3.conf
 COPY start-simulation.sh /usr/local/bin/start-simulation
 COPY webcam_bridge.py /usr/local/bin/webcam-bridge
+COPY map_frame_adapter.py /usr/local/bin/map-frame-adapter
+COPY map_frame_adapter.yaml /etc/map-frame-adapter.yaml
 COPY vision_turn_controller.py /usr/local/bin/vision-turn-controller
 COPY unstamped_cmd_relay.py /usr/local/bin/unstamped-cmd-relay
+COPY roomba_dry_run_adapter.py /usr/local/bin/roomba-dry-run-adapter
+COPY recording_status.py /usr/local/bin/recording-status
 COPY vision_controller.yaml /etc/vision-controller.yaml
 COPY add_litter_marker_display.py /tmp/add-litter-marker-display.py
 RUN chmod +x /usr/local/bin/start-simulation /usr/local/bin/webcam-bridge \
-    /usr/local/bin/vision-turn-controller /usr/local/bin/unstamped-cmd-relay \
+    /usr/local/bin/map-frame-adapter /usr/local/bin/vision-turn-controller \
+    /usr/local/bin/unstamped-cmd-relay /usr/local/bin/roomba-dry-run-adapter \
+    /usr/local/bin/recording-status \
     && python3 /tmp/add-litter-marker-display.py \
     && rm /tmp/add-litter-marker-display.py \
     && echo 'source /opt/create3_ws/install/setup.bash' >> /root/.bashrc

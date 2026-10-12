@@ -4,15 +4,16 @@ vision_turn_controller:
     control_enabled: false
     calibration_ready: false
 
-    # Simulation: nav_msgs/msg/Odometry. For ArUco, use pose_stamped and a
-    # geometry_msgs/msg/PoseStamped topic expressed in the calibrated world frame.
-    pose_source: odom
-    pose_topic: /odom
+    # Simulation map_frame_adapter and future ArUco both provide PoseStamped in map.
+    pose_source: pose_stamped
+    pose_topic: /robot/pose
 
     detections_topic: /webcam/detections
     cmd_vel_topic: /cmd_vel_unstamped
     target_label: litter
-    target_frame: odom
+    detection_target_frame: odom
+    detection_target_topic: /litter/target_odom
+    target_frame: map
     target_topic: /litter/target
     target_marker_topic: /litter/target_marker
     reached_topic: /litter/reached
@@ -26,3 +27,9 @@ vision_turn_controller:
     angle_tolerance: 0.08
     arrival_distance: 0.15
     input_timeout: 1.0
+
+    # Start with rotation only. Change to approach only after turn_only is verified.
+    control_mode: turn_only
+    linear_gain: 0.4
+    max_linear_speed: 0.08
+    forward_angle_tolerance: 0.15

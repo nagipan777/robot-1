@@ -1,0 +1,2 @@
+# Host-side Roomba 680 UART driver
+pyserial>=3.5,<4

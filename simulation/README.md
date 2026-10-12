@@ -29,7 +29,7 @@ ros2 topic echo /webcam/detections
 
 ## ごみ方向への旋回制御（未校正・無効）
 
-`vision_turn_controller` は `/webcam/detections` からクラス名が `litter` の検出だけを選び、シミュレーターでは `/odom` のロボット姿勢を購読します。画像座標をodom平面へ変換した後、旋回指令を `/cmd_vel_unstamped`（`geometry_msgs/msg/Twist`）へ送る構成です。シミュレーター内のリレーが、これをCreate 3用の `/cmd_vel`（`TwistStamped`）へ変換します。
+`vision_turn_controller`は`/webcam/detections`からクラス名が`litter`の検出だけを選び、画像座標をまず`odom`床面座標へ変換します。`map_frame_adapter`がごみ位置と`/odom`姿勢の両方へ同じ`map←odom`変換を数値適用し、`map`座標系の`/litter/target`と`/robot/pose`を生成します。制御ノードはこの2入力から`/cmd_vel_unstamped`（`geometry_msgs/msg/Twist`）へ速度指令を送り、シミュレーター内のリレーがCreate 3用の`/cmd_vel`（`TwistStamped`）へ変換します。
 
 画像座標とodom座標はまだ校正されていないため、[vision_controller.yaml](vision_controller.yaml) の `control_enabled` と `calibration_ready` は両方とも `false` です。この状態では制御ノードは速度指令を出しませんが、座標変換結果は確認できます。
 
@@ -80,7 +80,7 @@ python calibrate_floor.py --camera 0
 
 シミュレーターでの吸引完了は物理的な吸引ではなく、`/litter/reached` が `true` になる到達判定として扱います。
 
-実機のArUco姿勢へ切り替える際は、同じ設定で `pose_source: pose_stamped` とし、`pose_topic` に校正済み世界座標系の `geometry_msgs/msg/PoseStamped` トピックを指定します。制御計算側の変更は不要です。
+実機のArUco姿勢へ切り替える際は、ArUcoノードが`map`座標系の`/robot/pose`（`geometry_msgs/msg/PoseStamped`）を生成します。シミュレーターの`map_frame_adapter`と同じ出力契約なので、制御計算側の変更は不要です。
 
 ローカルの床とCreate 3・充電ドックを表示します。外部のGazebo Fuelモデルは不要です。MacのGPUはコンテナから使用せず、ソフトウェア描画を使います。8GB RAMのMac用にVMを4GB・2コアにし、RVizは自動起動しません。
 

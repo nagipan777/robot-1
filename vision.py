@@ -41,6 +41,11 @@ def main():
     parser.add_argument("--camera", type=int, default=0, help="カメラ番号（既定: 0）")
     parser.add_argument("--preview", action="store_true", help="検出せずにカメラ映像のみ表示")
     parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="録画時などにフレームごとの検出ログを表示しない",
+    )
+    parser.add_argument(
         "--simulator",
         default="http://127.0.0.1:8765/detections",
         help="検出結果の送信先（空文字を指定すると送信しない）",
@@ -109,10 +114,11 @@ def main():
                             "height": round(y2 - y1, 1),
                         }
                     )
-                    print(
-                        f"{label} 信頼度: {confidence:.2f} "
-                        f"画像座標: ({center_x:.0f}, {center_y:.0f})"
-                    )
+                    if not args.quiet:
+                        print(
+                            f"{label} 信頼度: {confidence:.2f} "
+                            f"画像座標: ({center_x:.0f}, {center_y:.0f})"
+                        )
                 frame = result.plot()
 
             if simulator is not None:

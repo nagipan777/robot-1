@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 import json
 import math
+import signal
 import time
 
 import rclpy
 from geometry_msgs.msg import PointStamped, PoseStamped, Twist
 from nav_msgs.msg import Odometry
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+from rclpy.signals import SignalHandlerOptions
 from std_msgs.msg import Bool, String
 from visualization_msgs.msg import Marker
 
@@ -40,6 +43,10 @@ def is_identity_homography(homography):
     )
 
 
+class ShutdownRequested(Exception):
+    pass
+
+
 class VisionTurnController(Node):
     def __init__(self):
         super().__init__("vision_turn_controller")
@@ -50,7 +57,9 @@ class VisionTurnController(Node):
         self.declare_parameter("detections_topic", "/webcam/detections")
         self.declare_parameter("cmd_vel_topic", "/cmd_vel_unstamped")
         self.declare_parameter("target_label", "litter")
-        self.declare_parameter("target_frame", "odom")
+        self.declare_parameter("detection_target_frame", "odom")
+        self.declare_parameter("detection_target_topic", "/litter/target_odom")
+        self.declare_parameter("target_frame", "map")
         self.declare_parameter("target_topic", "/litter/target")
         self.declare_parameter("target_marker_topic", "/litter/target_marker")
         self.declare_parameter("reached_topic", "/litter/reached")
@@ -62,11 +71,17 @@ class VisionTurnController(Node):
         self.declare_parameter("angle_tolerance", 0.08)
         self.declare_parameter("arrival_distance", 0.15)
         self.declare_parameter("input_timeout", 1.0)
+        self.declare_parameter("control_mode", "turn_only")
+        self.declare_parameter("linear_gain", 0.4)
+        self.declare_parameter("max_linear_speed", 0.08)
+        self.declare_parameter("forward_angle_tolerance", 0.15)
 
         self.robot_pose = None
         self.pose_received_at = 0.0
         self.target_pixel = None
         self.target_odom = None
+        self.control_target = None
+        self.target_received_at = 0.0
         self.detection_received_at = 0.0
         self.last_target_log_at = 0.0
         self.marker_visible = False
@@ -79,6 +94,12 @@ class VisionTurnController(Node):
         pose_topic = self.get_parameter("pose_topic").value
 
         self.create_subscription(String, detections_topic, self.on_detections, 10)
+        self.create_subscription(
+            PointStamped,
+            self.get_parameter("target_topic").value,
+            self.on_target,
+            10,
+        )
         if pose_source == "odom":
             self.create_subscription(Odometry, pose_topic, self.on_odom, 10)
         elif pose_source == "pose_stamped":
@@ -87,7 +108,7 @@ class VisionTurnController(Node):
             raise ValueError("pose_source must be 'odom' or 'pose_stamped'")
         self.publisher = self.create_publisher(Twist, cmd_vel_topic, 10)
         self.target_publisher = self.create_publisher(
-            PointStamped, self.get_parameter("target_topic").value, 10
+            PointStamped, self.get_parameter("detection_target_topic").value, 10
         )
         marker_qos = QoSProfile(
             depth=1,
@@ -113,7 +134,38 @@ class VisionTurnController(Node):
         self.store_pose(message.pose.pose)
 
     def on_pose_stamped(self, message):
+        expected_frame = self.get_parameter("target_frame").value
+        if message.header.frame_id != expected_frame:
+            self.robot_pose = None
+            self.pose_received_at = 0.0
+            self.stop_if_active()
+            self.get_logger().warning(
+                f"Ignoring pose in frame {message.header.frame_id!r}; "
+                f"expected {expected_frame!r}"
+            )
+            return
         self.store_pose(message.pose)
+
+    def on_target(self, message):
+        expected_frame = self.get_parameter("target_frame").value
+        if message.header.frame_id != expected_frame:
+            self.control_target = None
+            self.target_received_at = 0.0
+            self.stop_if_active()
+            self.get_logger().warning(
+                f"Ignoring target in frame {message.header.frame_id!r}; "
+                f"expected {expected_frame!r}"
+            )
+            return
+        if not math.isfinite(message.point.x) or not math.isfinite(message.point.y):
+            self.control_target = None
+            self.target_received_at = 0.0
+            self.stop_if_active()
+            self.get_logger().warning("Ignoring non-finite target coordinates")
+            return
+        self.control_target = (message.point.x, message.point.y)
+        self.target_received_at = time.monotonic()
+        self.publish_marker(message)
 
     def on_detections(self, message):
         try:
@@ -154,7 +206,7 @@ class VisionTurnController(Node):
 
     def publish_target(self, confidence):
         stamp = self.get_clock().now().to_msg()
-        frame = self.get_parameter("target_frame").value
+        frame = self.get_parameter("detection_target_frame").value
         target_x, target_y = self.target_odom
 
         point = PointStamped()
@@ -163,23 +215,6 @@ class VisionTurnController(Node):
         point.point.x = target_x
         point.point.y = target_y
         self.target_publisher.publish(point)
-
-        marker = Marker()
-        marker.header = point.header
-        marker.ns = "litter_target"
-        marker.id = 0
-        marker.type = Marker.SPHERE
-        marker.action = Marker.ADD
-        marker.pose.position.x = target_x
-        marker.pose.position.y = target_y
-        marker.pose.position.z = 0.05
-        marker.pose.orientation.w = 1.0
-        marker.scale.x = marker.scale.y = marker.scale.z = 0.15
-        marker.color.r = 1.0
-        marker.color.g = 0.35
-        marker.color.a = 0.9
-        self.marker_publisher.publish(marker)
-        self.marker_visible = True
 
         now = time.monotonic()
         if now - self.last_target_log_at >= 1.0:
@@ -190,9 +225,29 @@ class VisionTurnController(Node):
             )
             self.last_target_log_at = now
 
+    def publish_marker(self, target):
+        marker = Marker()
+        marker.header = target.header
+        marker.ns = "litter_target"
+        marker.id = 0
+        marker.type = Marker.SPHERE
+        marker.action = Marker.ADD
+        marker.pose.position.x = target.point.x
+        marker.pose.position.y = target.point.y
+        marker.pose.position.z = 0.05
+        marker.pose.orientation.w = 1.0
+        marker.scale.x = marker.scale.y = marker.scale.z = 0.15
+        marker.color.r = 1.0
+        marker.color.g = 0.35
+        marker.color.a = 0.9
+        self.marker_publisher.publish(marker)
+        self.marker_visible = True
+
     def clear_target(self):
         self.target_pixel = None
         self.target_odom = None
+        self.control_target = None
+        self.target_received_at = 0.0
         if self.marker_visible:
             marker = Marker()
             marker.header.stamp = self.get_clock().now().to_msg()
@@ -214,21 +269,21 @@ class VisionTurnController(Node):
     def update_control(self):
         now = time.monotonic()
         timeout = self.get_parameter("input_timeout").value
-        inputs_fresh = (
-            self.robot_pose is not None
-            and self.target_odom is not None
-            and now - self.pose_received_at <= timeout
-            and now - self.detection_received_at <= timeout
-        )
         if self.target_odom is not None and now - self.detection_received_at > timeout:
             self.clear_target()
+        inputs_fresh = (
+            self.robot_pose is not None
+            and self.control_target is not None
+            and now - self.pose_received_at <= timeout
+            and now - self.target_received_at <= timeout
+        )
         if not inputs_fresh:
             self.stop_if_active()
             self.reached_publisher.publish(Bool(data=False))
             return
 
         robot_x, robot_y, robot_yaw = self.robot_pose
-        target_x, target_y = self.target_odom
+        target_x, target_y = self.control_target
         distance = math.hypot(target_x - robot_x, target_y - robot_y)
         reached = distance <= self.get_parameter("arrival_distance").value
         self.reached_publisher.publish(Bool(data=reached))
@@ -246,6 +301,18 @@ class VisionTurnController(Node):
             return
 
         self.warned_not_ready = False
+        if reached:
+            self.publish_stop()
+            return
+
+        mode = self.get_parameter("control_mode").value
+        if mode not in ("turn_only", "approach"):
+            self.stop_if_active()
+            self.get_logger().error(
+                f"Unknown control_mode={mode!r}; expected 'turn_only' or 'approach'"
+            )
+            return
+
         target_yaw = math.atan2(target_y - robot_y, target_x - robot_x)
         error = normalize_angle(target_yaw - robot_yaw)
         command = Twist()
@@ -253,19 +320,38 @@ class VisionTurnController(Node):
             gain = self.get_parameter("angular_gain").value
             limit = self.get_parameter("max_angular_speed").value
             command.angular.z = max(-limit, min(limit, gain * error))
+        if (
+            mode == "approach"
+            and abs(error) <= self.get_parameter("forward_angle_tolerance").value
+        ):
+            gain = self.get_parameter("linear_gain").value
+            limit = self.get_parameter("max_linear_speed").value
+            remaining = distance - self.get_parameter("arrival_distance").value
+            command.linear.x = max(0.0, min(limit, gain * remaining))
         self.publisher.publish(command)
         self.output_active = True
 
 
 def main():
-    rclpy.init()
+    rclpy.init(signal_handler_options=SignalHandlerOptions.NO)
     node = VisionTurnController()
+
+    def shutdown_handler(_signum, _frame):
+        raise ShutdownRequested
+
+    signal.signal(signal.SIGINT, shutdown_handler)
+    signal.signal(signal.SIGTERM, shutdown_handler)
     try:
         rclpy.spin(node)
+    except (KeyboardInterrupt, ExternalShutdownException, ShutdownRequested):
+        pass
     finally:
-        node.publish_stop()
+        if rclpy.ok():
+            node.publish_stop()
+            time.sleep(0.1)
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":

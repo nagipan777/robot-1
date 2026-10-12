@@ -1,0 +1,14 @@
+map_frame_adapter:
+  ros__parameters:
+    source_frame: odom
+    map_frame: map
+    odom_topic: /odom
+    pose_topic: /robot/pose
+    target_input_topic: /litter/target_odom
+    target_output_topic: /litter/target
+
+    # Rigid 2D transform map <- odom. Simulation currently uses the same origin,
+    # but the adapter still applies this transform numerically and publishes TF.
+    map_from_odom_x: 0.0
+    map_from_odom_y: 0.0
+    map_from_odom_yaw: 0.0

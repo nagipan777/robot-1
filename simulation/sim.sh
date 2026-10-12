@@ -24,5 +24,9 @@ case "${1:-help}" in
     "${compose[@]}" exec simulator bash -lc \
       'source /opt/create3_ws/install/setup.bash; ros2 topic pub -r 2 /litter/target_marker visualization_msgs/msg/Marker "{header: {frame_id: odom}, ns: known_floor_test, id: 99, type: 2, action: 0, pose: {position: {x: 1.5, y: 0.0, z: 0.05}, orientation: {w: 1.0}}, scale: {x: 0.2, y: 0.2, z: 0.2}, color: {r: 0.0, g: 1.0, b: 0.0, a: 1.0}}"'
     ;;
-  *) echo "Usage: $0 {up|down|stop|shell|status|logs|teleop|test-marker}" ;;
+  record-status)
+    "${compose[@]}" exec simulator bash -lc \
+      'source /opt/create3_ws/install/setup.bash; exec /usr/local/bin/recording-status'
+    ;;
+  *) echo "Usage: $0 {up|down|stop|shell|status|logs|teleop|test-marker|record-status}" ;;
 esac

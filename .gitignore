@@ -34,5 +34,12 @@ log/
 .DS_Store
 .idea/
 .vscode/
+.micropico
 *.swp
 *~
+
+# Local hardware test output
+/odometry_log.csv
+
+# Superseded duplicate of test_navigation.py
+/go_to_goal.py
