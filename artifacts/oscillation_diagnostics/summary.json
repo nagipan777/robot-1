@@ -1,0 +1,147 @@
+{
+  "duration_s": 180.0,
+  "counts": {
+    "/hazard_detection": 3193,
+    "/diffdrive_controller/cmd_vel": 2059,
+    "/odom": 3070,
+    "/cmd_vel_unstamped": 467,
+    "/cmd_vel": 470
+  },
+  "graph": {
+    "/cmd_vel_unstamped": {
+      "publishers": [
+        {
+          "node": "vision_turn_controller",
+          "namespace": "/",
+          "type": "geometry_msgs/msg/Twist"
+        }
+      ],
+      "subscriptions": [
+        {
+          "node": "unstamped_cmd_relay",
+          "namespace": "/",
+          "type": "geometry_msgs/msg/Twist"
+        },
+        {
+          "node": "pai_presentation_visualizer",
+          "namespace": "/",
+          "type": "geometry_msgs/msg/Twist"
+        },
+        {
+          "node": "oscillation_diagnostics",
+          "namespace": "/",
+          "type": "geometry_msgs/msg/Twist"
+        },
+        {
+          "node": "motion_control",
+          "namespace": "/",
+          "type": "geometry_msgs/msg/Twist"
+        }
+      ]
+    },
+    "/cmd_vel": {
+      "publishers": [
+        {
+          "node": "unstamped_cmd_relay",
+          "namespace": "/",
+          "type": "geometry_msgs/msg/TwistStamped"
+        }
+      ],
+      "subscriptions": [
+        {
+          "node": "oscillation_diagnostics",
+          "namespace": "/",
+          "type": "geometry_msgs/msg/TwistStamped"
+        },
+        {
+          "node": "motion_control",
+          "namespace": "/",
+          "type": "geometry_msgs/msg/TwistStamped"
+        }
+      ]
+    },
+    "/diffdrive_controller/cmd_vel": {
+      "publishers": [
+        {
+          "node": "motion_control",
+          "namespace": "/",
+          "type": "geometry_msgs/msg/TwistStamped"
+        }
+      ],
+      "subscriptions": [
+        {
+          "node": "oscillation_diagnostics",
+          "namespace": "/",
+          "type": "geometry_msgs/msg/TwistStamped"
+        },
+        {
+          "node": "diffdrive_controller",
+          "namespace": "/",
+          "type": "geometry_msgs/msg/TwistStamped"
+        }
+      ]
+    },
+    "/odom": {
+      "publishers": [
+        {
+          "node": "diffdrive_controller",
+          "namespace": "/",
+          "type": "nav_msgs/msg/Odometry"
+        }
+      ],
+      "subscriptions": [
+        {
+          "node": "map_frame_adapter",
+          "namespace": "/",
+          "type": "nav_msgs/msg/Odometry"
+        },
+        {
+          "node": "oscillation_diagnostics",
+          "namespace": "/",
+          "type": "nav_msgs/msg/Odometry"
+        },
+        {
+          "node": "motion_control",
+          "namespace": "/",
+          "type": "nav_msgs/msg/Odometry"
+        },
+        {
+          "node": "robot_state",
+          "namespace": "/",
+          "type": "nav_msgs/msg/Odometry"
+        }
+      ]
+    },
+    "/hazard_detection": {
+      "publishers": [
+        {
+          "node": "hazards_vector_publisher",
+          "namespace": "/",
+          "type": "irobot_create_msgs/msg/HazardDetectionVector"
+        }
+      ],
+      "subscriptions": [
+        {
+          "node": "oscillation_diagnostics",
+          "namespace": "/",
+          "type": "irobot_create_msgs/msg/HazardDetectionVector"
+        },
+        {
+          "node": "motion_control",
+          "namespace": "/",
+          "type": "irobot_create_msgs/msg/HazardDetectionVector"
+        },
+        {
+          "node": "kidnap_estimator_publisher",
+          "namespace": "/",
+          "type": "irobot_create_msgs/msg/HazardDetectionVector"
+        }
+      ]
+    }
+  },
+  "command_reversals": [],
+  "stamped_command_reversals": [],
+  "motion_output_reversals": [],
+  "odom_velocity_reversals": [],
+  "nonempty_hazards": []
+}

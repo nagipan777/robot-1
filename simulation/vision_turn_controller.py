@@ -70,6 +70,7 @@ class VisionTurnController(Node):
         self.declare_parameter("max_angular_speed", 0.8)
         self.declare_parameter("angle_tolerance", 0.08)
         self.declare_parameter("arrival_distance", 0.15)
+        self.declare_parameter("arrival_epsilon", 0.0)
         self.declare_parameter("input_timeout", 1.0)
         self.declare_parameter("control_mode", "turn_only")
         self.declare_parameter("linear_gain", 0.4)
@@ -87,6 +88,7 @@ class VisionTurnController(Node):
         self.marker_visible = False
         self.warned_not_ready = False
         self.output_active = False
+        self.target_reached = False
 
         detections_topic = self.get_parameter("detections_topic").value
         cmd_vel_topic = self.get_parameter("cmd_vel_topic").value
@@ -163,7 +165,10 @@ class VisionTurnController(Node):
             self.stop_if_active()
             self.get_logger().warning("Ignoring non-finite target coordinates")
             return
-        self.control_target = (message.point.x, message.point.y)
+        new_target = (message.point.x, message.point.y)
+        if self.control_target != new_target:
+            self.target_reached = False
+        self.control_target = new_target
         self.target_received_at = time.monotonic()
         self.publish_marker(message)
 
@@ -247,6 +252,7 @@ class VisionTurnController(Node):
         self.target_pixel = None
         self.target_odom = None
         self.control_target = None
+        self.target_reached = False
         self.target_received_at = 0.0
         if self.marker_visible:
             marker = Marker()
@@ -285,7 +291,20 @@ class VisionTurnController(Node):
         robot_x, robot_y, robot_yaw = self.robot_pose
         target_x, target_y = self.control_target
         distance = math.hypot(target_x - robot_x, target_y - robot_y)
-        reached = distance <= self.get_parameter("arrival_distance").value
+        arrival_distance = self.get_parameter("arrival_distance").value
+        arrival_epsilon = self.get_parameter("arrival_epsilon").value
+        if arrival_epsilon < 0.0:
+            self.stop_if_active()
+            self.get_logger().error("arrival_epsilon must be non-negative")
+            return
+        reached_now = distance <= arrival_distance + arrival_epsilon
+        if reached_now and not self.target_reached:
+            self.target_reached = True
+            self.get_logger().info(
+                f"Target reached: distance={distance:.6f} m, "
+                f"threshold={arrival_distance + arrival_epsilon:.6f} m"
+            )
+        reached = self.target_reached
         self.reached_publisher.publish(Bool(data=reached))
 
         enabled = self.get_parameter("control_enabled").value
@@ -326,7 +345,7 @@ class VisionTurnController(Node):
         ):
             gain = self.get_parameter("linear_gain").value
             limit = self.get_parameter("max_linear_speed").value
-            remaining = distance - self.get_parameter("arrival_distance").value
+            remaining = distance - arrival_distance
             command.linear.x = max(0.0, min(limit, gain * remaining))
         self.publisher.publish(command)
         self.output_active = True

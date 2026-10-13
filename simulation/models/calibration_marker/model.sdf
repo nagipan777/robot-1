@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<sdf version="1.9">
+  <model name="sim_camera_calibration_marker">
+    <static>true</static>
+    <link name="marker_link">
+      <visual name="marker">
+        <pose>0 0 0.003 0 0 0</pose>
+        <geometry><box><size>0.18 0.18 0.006</size></box></geometry>
+        <material>
+          <ambient>1 0 1 1</ambient>
+          <diffuse>1 0 1 1</diffuse>
+          <emissive>0.5 0 0.5 1</emissive>
+        </material>
+      </visual>
+    </link>
+  </model>
+</sdf>

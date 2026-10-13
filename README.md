@@ -96,6 +96,72 @@ yolo detect train model=yolo26n.pt data=taco_dataset/data.yaml epochs=40 imgsz=6
 
 <http://localhost:6080/vnc.html?autoconnect=true&resize=scale>
 
+Gazeboの固定RGBカメラを確認する場合は、通常ワールドとは別のカメラ付きワールドを起動します。
+
+```bash
+./simulation/sim.sh camera-up
+./simulation/sim.sh camera-status
+```
+
+VNC内の`rqt_image_view`へ`/sim/fixed_camera/image_raw`が自動表示されます。通常の`./simulation/sim.sh up`ではカメラ関連プロセスは起動しません。
+`camera-up`のときだけ、同じ画像をMacのlocalhostへMJPEG配信します。
+
+```bash
+# 配信状態の確認
+curl http://127.0.0.1:8766/health
+
+# 仮想固定カメラをYOLO入力にして、従来と同じ検出JSONを送信
+source .venv/bin/activate
+python vision.py --video-url http://127.0.0.1:8766/stream.mjpg
+```
+
+実Webカメラへ戻す場合は`python vision.py --camera 0`を使います。入力切り替えでROS 2側を再ビルド・再起動する必要はありません。MJPEGポート8766はDockerからMacの`127.0.0.1`だけへ公開され、LANには公開されません。
+
+### 仮想ゴミと仮想カメラ校正
+
+`camera-up`の起動後、視覚確認用の仮想ゴミを配置・移動・削除できます。モデルはカメラ検証専用のvisual-onlyモデルで、Create3の衝突判定には影響しません。
+
+```bash
+./simulation/sim.sh litter-add can 1.5 -0.7
+./simulation/sim.sh litter-move paper 1.0 1.0
+./simulation/sim.sh litter-add bottle 1.5 -0.7
+./simulation/sim.sh litter-remove
+```
+
+種類を省略した従来形式は空き缶として扱います。比較対象は`can`、`paper`、`bottle`です。
+
+既存YOLOモデルを再学習せず評価し、生画像、注釈画像、検出JSONを保存します。
+
+```bash
+source .venv/bin/activate
+python evaluate_sim_litter.py
+```
+
+3種類を背景画像と同一条件で比較し、検出枠、confidence、正解領域とのIoUを保存する場合は次を実行します。既存の重み、confidence閾値0.5、校正値は変更しません。
+
+```bash
+python compare_sim_litter.py
+```
+
+結果は`artifacts/sim_litter_comparison/results.{json,md}`と種類別の画像へ保存されます。今回の固定条件では、空き缶と紙の検出は正解領域とのIoUが0.02未満で背景由来の偽陽性、ボトルは未検出でした。このため、3種類とも再学習なしで認識可能とは判定していません。
+
+仮想カメラの校正は、床面上のマゼンタ色マーカーを既知位置へ順番に配置して画素中心を測ります。4点を行列計算、別の3点を誤差検証に使用します。
+
+```bash
+python collect_sim_camera_points.py
+python calibrate_sim_camera.py
+```
+
+結果は`simulation/vision_controller.sim_camera.yaml`だけへ保存されます。実Webカメラ用の`simulation/vision_controller.yaml`は変更しません。校正値を書き込んだ後も`control_enabled=false`と`calibration_ready=false`を強制的に維持します。
+
+提出動画用にGazeboを左、RVizを右へ自動配置します。新しい室内ワールド、走行軌跡、進行方向、目標線、速度と状態の文字表示も自動で有効になります。
+
+```bash
+./simulation/sim.sh presentation-layout
+```
+
+表示の意味は、シアンが軌跡と進行方向、オレンジが目標までの線と未到達目標、緑が到達済み目標です。表示ノードは購読とMarker配信だけを行い、速度指令は生成しません。
+
 VNC内ではGazeboとRVizが別ウィンドウで動きます。必要に応じて`Alt+Tab`で切り替えてください。状態とログはMac側の別ターミナルから確認できます。
 
 ```bash
@@ -169,7 +235,7 @@ Mac側の別ターミナルで実行します。
 ```bash
 cd /path/to/robot-1
 source .venv/bin/activate
-python vision.py
+python vision.py --camera 0
 ```
 
 映像ウィンドウも表示する場合は次を使います。
@@ -182,6 +248,12 @@ python vision.py --preview
 
 ```bash
 python vision.py --simulator '' --preview
+```
+
+カメラ付きワールドの映像を使う場合は、`camera-up`後に入力URLだけを変更します。検出JSONの形式と送信先は実Webカメラの場合と同じです。
+
+```bash
+python vision.py --video-url http://127.0.0.1:8766/stream.mjpg
 ```
 
 ## 8. ROS 2トピックと変換座標を確認する
@@ -223,17 +295,19 @@ RVizでは`/litter/target_marker`にオレンジ色の球が表示されます�
 
 ```bash
 source .venv/bin/activate
-python vision.py --preview
+python vision.py --quiet
 ```
 
-別のターミナルからコンテナへ入り、校正済みであることと制御モードを明示してから、最後に制御を有効にします。
+別のターミナルでROS 2ノード、主要トピック、現在の安全パラメータを確認します。
 
 ```bash
-./simulation/sim.sh shell
+./simulation/sim.sh ros-status
+```
 
-ros2 param set /vision_turn_controller calibration_ready true
-ros2 param set /vision_turn_controller control_mode turn_only
-ros2 param set /vision_turn_controller control_enabled true
+校正結果が正しいことを確認した後、旋回だけを明示的に有効化します。このコマンドは最初に制御を無効化してから、`calibration_ready=true`、`turn_only`、`control_enabled=true`の順に反映します。
+
+```bash
+./simulation/sim.sh control-turn
 ```
 
 ### 9.1 旋回だけを確認する
@@ -256,7 +330,7 @@ ros2 topic echo /cmd_vel_unstamped
 旋回確認後、ロボットから目標までの直線上にドックや障害物がないことをGazeboで確認します。その後、制御モードだけを切り替えます。
 
 ```bash
-ros2 param set /vision_turn_controller control_mode approach
+./simulation/sim.sh control-approach
 ```
 
 `approach`では、目標との向きのずれが0.15 rad以内のときだけ、最大0.08 m/sで前進します。向きが大きくずれた場合は前進せず、旋回を優先します。目標から15 cm以内へ入ると停止し、次が`true`になります。
@@ -276,10 +350,10 @@ ros2 topic echo /cmd_vel_unstamped
 その状態で、制御を実行しているシェルから無効化します。ノードがゼロ速度を送信したことを監視側で確認し、`Ctrl+C`で監視を終了します。
 
 ```bash
-ros2 param set /vision_turn_controller control_enabled false
+./simulation/sim.sh control-off
 ```
 
-緊急時は、コンテナ内の別ターミナルからゼロ速度を送れます。
+`control-off`は制御を無効化した後、ゼロ速度を1回配信します。緊急時にコンテナ内から直接ゼロ速度を送る場合は次を使えます。
 
 ```bash
 ros2 topic pub --once /cmd_vel_unstamped geometry_msgs/msg/Twist '{}'
@@ -418,6 +492,11 @@ ros2 topic echo /roomba/wheel_speeds_dry_run
 - `roomba_driver.py`: Roomba 680のSafeモードUARTドライバと実機試験CLI
 - `odometry.py`: 16bitエンコーダの折り返しに対応した差動二輪オドメトリ
 - `vision.py`: Webカメラ画像のYOLO推論とJSON送信
+- `simulation/sim_camera_mjpeg.py`: 仮想固定カメラ画像のMJPEG配信
+- `simulation/models/demo_litter/model.sdf`: 仮想カメラ検証用のゴミモデル
+- `evaluate_sim_litter.py`: 既存YOLOによる仮想ゴミ評価と証跡保存
+- `collect_sim_camera_points.py`: Gazebo既知点の画素座標収集
+- `calibrate_sim_camera.py`: 仮想カメラ専用ホモグラフィの計算・検証
 - `calibrate_floor.py`: 4点クリックによる床面ホモグラフィ校正
 - `simulation/vision_turn_controller.py`: 検出座標の変換、Marker、到達判定、速度指令
 - `simulation/map_frame_adapter.py`: `odom`から`map`への姿勢・目標変換と静的TF
@@ -428,3 +507,33 @@ ros2 topic echo /roomba/wheel_speeds_dry_run
 - `simulation/README.md`: シミュレーター構成の詳細
 
 ROS 2 Jazzy、Gazebo Harmonic、Create 3の出典と使用コミットは[simulation/README.md](simulation/README.md)に記載しています。
+
+## 既知座標による自律移動試験（第4段階A）
+
+YOLOを使わず、Gazeboの既知座標を入力して共通Navigationを検証できます。通常の`sim.sh up`では起動せず、次の明示的な手順だけで制御を有効化します。
+
+```bash
+./simulation/sim.sh nav-test-up
+./simulation/sim.sh known-target-test
+```
+
+テスト入力は`odom`座標系の`/litter/target_odom`へ送ります。`map_frame_adapter`が`/litter/target`へ変換するため、通常の目標経路と競合せず、`vision_turn_controller`の制御計算をそのまま通ります。試験前に仮想カメラ用ホモグラフィの検証点誤差、初期安全フラグ、最高速度0.08 m/s以下を検査します。
+
+シミュレーション専用設定では到達判定に1 mmの`arrival_epsilon`を使用します。比例速度が到達半径へ漸近して停止する数値境界だけを吸収する設定で、通常設定は`arrival_epsilon=0.0`のため従来動作です。到達後は同一目標に対する到達状態を保持し、ゼロ速度を明示的に配信し続けます。
+
+結果は`artifacts/known_target_test/result.json`へ保存されます。初期・目標・最終姿勢、軌跡、最終位置誤差、旋回・前進・到達・停止、入力タイムアウト停止、停止理由を含みます。例外終了時の停止も別に確認できます（このコマンドは意図どおり非0で終了します）。
+
+```bash
+./simulation/sim.sh nav-test-up
+./simulation/sim.sh known-target-abort-test
+```
+
+どちらも終了処理で`control_enabled=false`、`calibration_ready=false`へ戻し、ゼロ速度を送信します。この試験はYOLO認識の成功を示すものではなく、Roomba 680へは接続しません。通常環境へ戻すには`./simulation/sim.sh up`を実行します。
+
+前後振動を読み取り専用で記録する場合は、専用試験を開始した別ターミナルで次を実行します。
+
+```bash
+./simulation/sim.sh oscillation-diagnostics 190
+```
+
+`/cmd_vel_unstamped`、`/cmd_vel`、`/diffdrive_controller/cmd_vel`、`/odom`、`/hazard_detection`を同一の単調時計基準で記録し、`artifacts/oscillation_diagnostics/`へJSONL、ROSグラフ、反転一覧を保存します。この診断ノードはPublisherを持ちません。

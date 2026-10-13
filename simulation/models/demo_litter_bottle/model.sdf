@@ -1,0 +1,33 @@
+<?xml version="1.0"?>
+<sdf version="1.9">
+  <model name="demo_litter">
+    <static>true</static>
+    <link name="litter_link">
+      <visual name="bottle_body">
+        <pose>0 0 0.065 1.57079632679 0 -0.28</pose>
+        <geometry><cylinder><radius>0.065</radius><length>0.34</length></cylinder></geometry>
+        <material><ambient>0.03 0.42 0.62 1</ambient><diffuse>0.04 0.70 0.94 1</diffuse><specular>0.7 0.7 0.7 1</specular></material>
+      </visual>
+      <visual name="bottle_base">
+        <pose>0.16 -0.046 0.065 0 0 0</pose>
+        <geometry><sphere><radius>0.067</radius></sphere></geometry>
+        <material><ambient>0.03 0.36 0.55 1</ambient><diffuse>0.04 0.63 0.87 1</diffuse></material>
+      </visual>
+      <visual name="neck">
+        <pose>-0.185 0.053 0.058 1.57079632679 0 -0.28</pose>
+        <geometry><cylinder><radius>0.035</radius><length>0.10</length></cylinder></geometry>
+        <material><ambient>0.03 0.40 0.60 1</ambient><diffuse>0.04 0.68 0.92 1</diffuse></material>
+      </visual>
+      <visual name="cap">
+        <pose>-0.235 0.068 0.058 1.57079632679 0 -0.28</pose>
+        <geometry><cylinder><radius>0.04</radius><length>0.035</length></cylinder></geometry>
+        <material><ambient>0.05 0.12 0.75 1</ambient><diffuse>0.08 0.20 1.0 1</diffuse></material>
+      </visual>
+      <visual name="label">
+        <pose>0 0 0.067 1.57079632679 0 -0.28</pose>
+        <geometry><cylinder><radius>0.067</radius><length>0.10</length></cylinder></geometry>
+        <material><ambient>0.92 0.92 0.92 1</ambient><diffuse>1 1 1 1</diffuse></material>
+      </visual>
+    </link>
+  </model>
+</sdf>

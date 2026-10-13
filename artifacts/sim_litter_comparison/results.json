@@ -1,0 +1,156 @@
+{
+  "weights": "/Users/imaichika/robot/runs/detect/taco/weights/best.pt",
+  "weights_sha256": "7f1e7e5540b30c05ec88cd413516009b6fad155ca654d1b22a324bd45ad39d8d",
+  "confidence_threshold": 0.5,
+  "placement_m": [
+    1.5,
+    -0.7
+  ],
+  "ground_truth_method": "absolute background difference >=25 in a fixed ROI",
+  "recognition_iou_threshold": 0.5,
+  "models": [
+    {
+      "kind": "can",
+      "appearance": {
+        "source": "demo_litter_baseline/model.sdf",
+        "physical_size_m": [
+          0.3,
+          0.17,
+          0.17
+        ],
+        "colors": [
+          "silver",
+          "red"
+        ],
+        "shape": "crushed horizontal drink can"
+      },
+      "changed_pixel_count": 686,
+      "ground_truth_box": [
+        360,
+        102,
+        391,
+        136
+      ],
+      "background_detections": [
+        {
+          "label": "litter",
+          "confidence": 0.7176741361618042,
+          "box": [
+            228.0343780517578,
+            40.54541015625,
+            383.47894287109375,
+            418.80609130859375
+          ]
+        }
+      ],
+      "litter_detections": [
+        {
+          "label": "litter",
+          "confidence": 0.704471230506897,
+          "box": [
+            227.62643432617188,
+            42.10546875,
+            387.8093566894531,
+            423.088623046875
+          ],
+          "iou": 0.015465948339673005
+        }
+      ],
+      "best_confidence": 0.704471230506897,
+      "best_iou": 0.015465948339673005,
+      "classification": "missed; detections are false positives"
+    },
+    {
+      "kind": "paper",
+      "appearance": {
+        "source": "demo_litter_paper/model.sdf",
+        "physical_size_m": [
+          0.4,
+          0.3,
+          0.1
+        ],
+        "colors": [
+          "off-white",
+          "beige",
+          "brown"
+        ],
+        "shape": "three overlapping folded sheets"
+      },
+      "changed_pixel_count": 904,
+      "ground_truth_box": [
+        360,
+        100,
+        391,
+        139
+      ],
+      "background_detections": [
+        {
+          "label": "litter",
+          "confidence": 0.7176741361618042,
+          "box": [
+            228.0343780517578,
+            40.54541015625,
+            383.47894287109375,
+            418.80609130859375
+          ]
+        }
+      ],
+      "litter_detections": [
+        {
+          "label": "litter",
+          "confidence": 0.729539155960083,
+          "box": [
+            216.9682159423828,
+            40.922637939453125,
+            391.42889404296875,
+            421.7652587890625
+          ],
+          "iou": 0.018196304656054665
+        }
+      ],
+      "best_confidence": 0.729539155960083,
+      "best_iou": 0.018196304656054665,
+      "classification": "missed; detections are false positives"
+    },
+    {
+      "kind": "bottle",
+      "appearance": {
+        "source": "demo_litter_bottle/model.sdf",
+        "physical_size_m": [
+          0.47,
+          0.14,
+          0.14
+        ],
+        "colors": [
+          "cyan",
+          "blue",
+          "white"
+        ],
+        "shape": "horizontal PET bottle with neck, cap and label"
+      },
+      "changed_pixel_count": 706,
+      "ground_truth_box": [
+        360,
+        99,
+        393,
+        143
+      ],
+      "background_detections": [
+        {
+          "label": "litter",
+          "confidence": 0.7176741361618042,
+          "box": [
+            228.0343780517578,
+            40.54541015625,
+            383.47894287109375,
+            418.80609130859375
+          ]
+        }
+      ],
+      "litter_detections": [],
+      "best_confidence": 0.0,
+      "best_iou": 0.0,
+      "classification": "missed; no detection"
+    }
+  ]
+}

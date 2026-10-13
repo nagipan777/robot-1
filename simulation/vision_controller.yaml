@@ -26,6 +26,7 @@ vision_turn_controller:
     max_angular_speed: 0.8
     angle_tolerance: 0.08
     arrival_distance: 0.15
+    arrival_epsilon: 0.0
     input_timeout: 1.0
 
     # Start with rotation only. Change to approach only after turn_only is verified.

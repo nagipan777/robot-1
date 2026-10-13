@@ -8,6 +8,11 @@ from pathlib import Path
 import cv2
 
 
+def select_video_source(camera, video_url):
+    """Return the OpenCV source while preserving camera 0 as the default."""
+    return video_url if video_url else camera
+
+
 class SimulatorConnection:
     def __init__(self, url):
         self.url = url
@@ -38,7 +43,12 @@ class SimulatorConnection:
 
 def main():
     parser = argparse.ArgumentParser(description="Webカメラの映像表示・YOLOによるゴミ検出")
-    parser.add_argument("--camera", type=int, default=0, help="カメラ番号（既定: 0）")
+    source_group = parser.add_mutually_exclusive_group()
+    source_group.add_argument("--camera", type=int, default=0, help="カメラ番号（既定: 0）")
+    source_group.add_argument(
+        "--video-url",
+        help="MJPEGなどの映像URL（例: http://127.0.0.1:8766/stream.mjpg）",
+    )
     parser.add_argument("--preview", action="store_true", help="検出せずにカメラ映像のみ表示")
     parser.add_argument(
         "--quiet",
@@ -69,11 +79,16 @@ def main():
             parser.error("物体検出用のYOLOモデルを --weights で指定してください。")
         print(f"YOLOモデルを読み込みました: {args.weights}")
 
-    cap = cv2.VideoCapture(args.camera)
+    video_source = select_video_source(args.camera, args.video_url)
+    source_name = args.video_url if args.video_url else f"カメラ {args.camera}"
+    cap = cv2.VideoCapture(video_source)
     try:
         if not cap.isOpened():
-            raise SystemExit(f"カメラ {args.camera} に接続できません。USB接続、カメラへのアクセス許可、--camera の番号を確認してください。")
-        print(f"カメラ {args.camera} の映像を待っています…")
+            raise SystemExit(
+                f"映像入力 {source_name} に接続できません。"
+                "入力URL、USB接続、カメラへのアクセス許可を確認してください。"
+            )
+        print(f"{source_name} の映像を待っています…")
         last_frame_at = time.monotonic()
         received_frame = False
         while True:
@@ -81,10 +96,9 @@ def main():
             if not ok or frame is None or frame.size == 0:
                 if time.monotonic() - last_frame_at >= 10:
                     raise SystemExit(
-                        f"カメラ {args.camera} から10秒間映像を取得できませんでした。"
-                        "USB接続とカメラへのアクセス許可を確認し、"
-                        "他のカメラ使用アプリを終了してください。"
-                        "別のカメラ番号は --camera 1 などで指定できます。"
+                        f"映像入力 {source_name} から10秒間映像を取得できませんでした。"
+                        "URLまたはUSB接続を確認してください。実カメラの場合は、"
+                        "他のカメラ使用アプリを終了し、--camera 1 なども試してください。"
                     )
                 if cv2.waitKey(1) & 0xFF in (ord("q"), 27):
                     break

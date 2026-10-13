@@ -7,9 +7,16 @@ services:
     ports:
       - "127.0.0.1:6080:6080"
       - "127.0.0.1:8765:8765"
+      - "127.0.0.1:8766:8766"
     shm_size: 512m
     environment:
       ROS_DOMAIN_ID: "33"
       ROS_AUTOMATIC_DISCOVERY_RANGE: LOCALHOST
+      SIM_WORLD: "${SIM_WORLD:-room}"
+      VISION_CONTROLLER_CONFIG: "${VISION_CONTROLLER_CONFIG:-/etc/vision-controller.yaml}"
+      ROBOT_X: "${ROBOT_X:-0.0}"
+      ROBOT_Y: "${ROBOT_Y:-0.0}"
+      ROBOT_YAW: "${ROBOT_YAW:-0.0}"
+      SPAWN_DOCK: "${SPAWN_DOCK:-true}"
     init: true
     stop_grace_period: 20s
