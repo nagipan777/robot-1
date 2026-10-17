@@ -1,0 +1,26 @@
+{
+  "timestamp": 1791803480.352087,
+  "video_url": "http://127.0.0.1:8766/stream.mjpg",
+  "weights": "/Users/imaichika/robot/runs/detect/taco/weights/best.pt",
+  "confidence_threshold": 0.5,
+  "image_width": 640,
+  "image_height": 480,
+  "detections": [
+    {
+      "label": "litter",
+      "confidence": 0.719835,
+      "center_x": 289.59,
+      "center_y": 230.31,
+      "width": 187.9,
+      "height": 378.72
+    },
+    {
+      "label": "litter",
+      "confidence": 0.695099,
+      "center_x": 316.25,
+      "center_y": 233.28,
+      "width": 133.08,
+      "height": 378.37
+    }
+  ]
+}

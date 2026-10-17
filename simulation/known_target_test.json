@@ -1,0 +1,9 @@
+{
+  "target_odom_m": [0.0, 0.25],
+  "publish_rate_hz": 10.0,
+  "test_timeout_s": 120.0,
+  "arrival_tolerance_m": 0.18,
+  "calibration_max_error_m": 0.05,
+  "max_linear_speed_m_s": 0.08,
+  "input_timeout_s": 1.0
+}

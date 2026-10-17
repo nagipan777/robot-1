@@ -1,0 +1,14 @@
+{
+  "targets_odom_m": [
+    {"name": "A", "x": 0.0, "y": 0.25},
+    {"name": "B", "x": 0.35, "y": 0.10}
+  ],
+  "publish_rate_hz": 10.0,
+  "post_arrival_hold_s": 2.2,
+  "test_timeout_s": 120.0,
+  "arrival_tolerance_m": 0.18,
+  "calibration_max_error_m": 0.05,
+  "max_linear_speed_m_s": 0.08,
+  "input_timeout_s": 1.0,
+  "minimum_static_obstacle_clearance_m": 1.0
+}

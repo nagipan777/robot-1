@@ -1,0 +1,32 @@
+vision_turn_controller:
+  ros__parameters:
+    # Kept disabled until the measured validation error is reviewed.
+    control_enabled: false
+    calibration_ready: false
+
+    pose_source: pose_stamped
+    pose_topic: /robot/pose
+    detections_topic: /webcam/detections
+    cmd_vel_topic: /cmd_vel_unstamped
+    target_label: litter
+    detection_target_frame: odom
+    detection_target_topic: /litter/target_odom
+    target_frame: map
+    target_topic: /litter/target
+    target_marker_topic: /litter/target_marker
+    reached_topic: /litter/reached
+
+    # Written by calibrate_sim_camera.py after independent-point validation.
+    image_to_odom_homography: [0.0, -0.0124913252039, 2.99167238633, -0.0124826624397, 0.0, 3.9882106495, 0.0, 0.0, 1.0]
+    calibration_image_width: 640
+    calibration_image_height: 480
+    angular_gain: 1.2
+    max_angular_speed: 0.8
+    angle_tolerance: 0.08
+    arrival_distance: 0.15
+    arrival_epsilon: 0.001
+    input_timeout: 1.0
+    control_mode: turn_only
+    linear_gain: 0.4
+    max_linear_speed: 0.08
+    forward_angle_tolerance: 0.15

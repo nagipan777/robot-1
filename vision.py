@@ -8,9 +8,42 @@ from pathlib import Path
 import cv2
 
 
+DEFAULT_CONFIDENCE = 0.5
+
+
+def confidence_threshold(value):
+    """Parse a YOLO confidence threshold accepted by the CLI."""
+    threshold = float(value)
+    if not 0.0 <= threshold <= 1.0:
+        raise argparse.ArgumentTypeError("confidence must be between 0 and 1")
+    return threshold
+
+
+def select_video_source(camera, video_url):
+    """Return the OpenCV source while preserving camera 0 as the default."""
+    return video_url if video_url else camera
+
+
+def open_video_capture(source, network_stream=False):
+    """Open a camera, bounding network-stream stalls so it can reconnect."""
+    if network_stream:
+        return cv2.VideoCapture(
+            source,
+            cv2.CAP_FFMPEG,
+            [
+                cv2.CAP_PROP_OPEN_TIMEOUT_MSEC,
+                5000,
+                cv2.CAP_PROP_READ_TIMEOUT_MSEC,
+                5000,
+            ],
+        )
+    return cv2.VideoCapture(source)
+
+
 class SimulatorConnection:
-    def __init__(self, url):
+    def __init__(self, url, timeout=0.2):
         self.url = url
+        self.timeout = timeout
         self.last_warning_at = 0.0
         self.connected = False
 
@@ -22,7 +55,7 @@ class SimulatorConnection:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=0.2):
+            with urllib.request.urlopen(request, timeout=self.timeout):
                 pass
             if not self.connected:
                 print(f"シミュレーターに接続しました: {self.url}")
@@ -38,7 +71,12 @@ class SimulatorConnection:
 
 def main():
     parser = argparse.ArgumentParser(description="Webカメラの映像表示・YOLOによるゴミ検出")
-    parser.add_argument("--camera", type=int, default=0, help="カメラ番号（既定: 0）")
+    source_group = parser.add_mutually_exclusive_group()
+    source_group.add_argument("--camera", type=int, default=0, help="カメラ番号（既定: 0）")
+    source_group.add_argument(
+        "--video-url",
+        help="MJPEGなどの映像URL（例: http://127.0.0.1:8766/stream.mjpg）",
+    )
     parser.add_argument("--preview", action="store_true", help="検出せずにカメラ映像のみ表示")
     parser.add_argument(
         "--quiet",
@@ -51,12 +89,30 @@ def main():
         help="検出結果の送信先（空文字を指定すると送信しない）",
     )
     parser.add_argument(
+        "--http-timeout",
+        type=float,
+        default=0.2,
+        help="検出JSON送信のタイムアウト秒（既定: 0.2）",
+    )
+    parser.add_argument(
         "--weights",
         default=str(Path(__file__).resolve().parent / "runs/detect/taco/weights/best.pt"),
         help="学習済みモデルのパス（既定: TACOのbest.pt）",
     )
+    parser.add_argument(
+        "--confidence",
+        type=confidence_threshold,
+        default=DEFAULT_CONFIDENCE,
+        help="YOLO検出信頼度の下限（既定: 0.5）",
+    )
     args = parser.parse_args()
-    simulator = SimulatorConnection(args.simulator) if args.simulator else None
+    if args.http_timeout <= 0.0:
+        parser.error("--http-timeout must be greater than zero")
+    simulator = (
+        SimulatorConnection(args.simulator, args.http_timeout)
+        if args.simulator
+        else None
+    )
 
     model = None
     if not args.preview:
@@ -69,22 +125,36 @@ def main():
             parser.error("物体検出用のYOLOモデルを --weights で指定してください。")
         print(f"YOLOモデルを読み込みました: {args.weights}")
 
-    cap = cv2.VideoCapture(args.camera)
+    video_source = select_video_source(args.camera, args.video_url)
+    source_name = args.video_url if args.video_url else f"カメラ {args.camera}"
+    cap = open_video_capture(video_source, network_stream=bool(args.video_url))
     try:
         if not cap.isOpened():
-            raise SystemExit(f"カメラ {args.camera} に接続できません。USB接続、カメラへのアクセス許可、--camera の番号を確認してください。")
-        print(f"カメラ {args.camera} の映像を待っています…")
+            raise SystemExit(
+                f"映像入力 {source_name} に接続できません。"
+                "入力URL、USB接続、カメラへのアクセス許可を確認してください。"
+            )
+        print(f"{source_name} の映像を待っています…")
         last_frame_at = time.monotonic()
         received_frame = False
         while True:
             ok, frame = cap.read()
             if not ok or frame is None or frame.size == 0:
+                if args.video_url:
+                    if time.monotonic() - last_frame_at >= 10:
+                        print(
+                            f"映像入力 {source_name} が途切れました。再接続します。"
+                        )
+                        last_frame_at = time.monotonic()
+                    cap.release()
+                    time.sleep(0.5)
+                    cap = open_video_capture(video_source, network_stream=True)
+                    continue
                 if time.monotonic() - last_frame_at >= 10:
                     raise SystemExit(
-                        f"カメラ {args.camera} から10秒間映像を取得できませんでした。"
-                        "USB接続とカメラへのアクセス許可を確認し、"
-                        "他のカメラ使用アプリを終了してください。"
-                        "別のカメラ番号は --camera 1 などで指定できます。"
+                        f"映像入力 {source_name} から10秒間映像を取得できませんでした。"
+                        "URLまたはUSB接続を確認してください。実カメラの場合は、"
+                        "他のカメラ使用アプリを終了し、--camera 1 なども試してください。"
                     )
                 if cv2.waitKey(1) & 0xFF in (ord("q"), 27):
                     break
@@ -97,7 +167,7 @@ def main():
 
             detections = []
             if model is not None:
-                result = model.predict(frame, conf=0.5, verbose=False)[0]
+                result = model.predict(frame, conf=args.confidence, verbose=False)[0]
                 for box in result.boxes:
                     x1, y1, x2, y2 = box.xyxy[0].cpu().tolist()
                     center_x = (x1 + x2) / 2
