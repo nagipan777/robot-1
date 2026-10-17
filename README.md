@@ -592,10 +592,10 @@ Pico Wは500msのUART停止監視を維持します。TCP上の任意データ�
 
 ```bash
 # 既定ポート9000
-./simulation/sim.sh roomba-tcp 192.168.0.32
+./simulation/sim.sh roomba-tcp PICO_W_IP
 
 # 任意ポート
-./simulation/sim.sh roomba-tcp 192.168.0.32 9000
+./simulation/sim.sh roomba-tcp PICO_W_IP 9000
 ```
 
 期待ログは次のとおりです。
