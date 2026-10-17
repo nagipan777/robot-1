@@ -1,0 +1,461 @@
+import socket
+import struct
+import threading
+import unittest
+
+from simulation.roomba_tcp_transport import (
+    CommandState,
+    DIAGNOSTIC_MAGIC,
+    DIAGNOSTIC_OI_MODE,
+    DIAGNOSTIC_OI_MODE_LIVE,
+    DIAGNOSTIC_OI_MODE_RESPONSE,
+    DIAGNOSTIC_STOP,
+    DIAGNOSTIC_STOP_RESPONSE,
+    CONTROL_ARM,
+    CONTROL_ARM_RESPONSE,
+    GENERATION_DRIVE,
+    RELAY_READY,
+    STOP_PACKET,
+    RoombaDiagnosticError,
+    RoombaTcpTransport,
+    SafeModeGate,
+    STOP_ACK_COMPLETE,
+    WatchdogTestCommandState,
+    drive_direct_packet,
+)
+
+
+class LocalRelayServer:
+    def __init__(self, handlers):
+        self.handlers = handlers
+        self.received = []
+        self.error = None
+        self.listener = socket.socket()
+        self.listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.listener.bind(("127.0.0.1", 0))
+        self.listener.listen(len(handlers))
+        self.host, self.port = self.listener.getsockname()
+        self.thread = threading.Thread(target=self.run, daemon=True)
+
+    def __enter__(self):
+        self.thread.start()
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.listener.close()
+        self.thread.join(timeout=2.0)
+        if exc_type is None and self.error is not None:
+            raise self.error
+
+    def run(self):
+        try:
+            for handler in self.handlers:
+                connection, _ = self.listener.accept()
+                with connection:
+                    handler(connection, self.received)
+        except BaseException as error:
+            self.error = error
+
+
+def receive_exact(connection, size):
+    data = bytearray()
+    while len(data) < size:
+        chunk = connection.recv(size - len(data))
+        if not chunk:
+            break
+        data.extend(chunk)
+    return bytes(data)
+
+
+def ready_handler(connection, received):
+    connection.sendall(RELAY_READY)
+    received.append(receive_exact(connection, len(STOP_PACKET)))
+
+
+class RoombaTcpTransportTests(unittest.TestCase):
+    def test_safe_gate_requires_complete_stop_ack_and_safe_mode(self):
+        gate = SafeModeGate()
+        self.assertTrue(gate.permits(0.0, 0.0))
+        self.assertFalse(gate.permits(0.01, 0.0))
+
+        gate.establish(STOP_ACK_COMPLETE, 0, 0, 2)
+        self.assertTrue(gate.permits(0.01, 0.0))
+
+        gate.reset()
+        self.assertFalse(gate.permits(0.01, 0.0))
+
+    def test_safe_gate_rejects_incomplete_or_invalid_confirmation(self):
+        cases = (
+            (0x03, 0, 0, 2),
+            (STOP_ACK_COMPLETE, 1, 0, 2),
+            (STOP_ACK_COMPLETE, 0, -1, 2),
+            (STOP_ACK_COMPLETE, 0, 0, 0),
+            (STOP_ACK_COMPLETE, 0, 0, 1),
+            (STOP_ACK_COMPLETE, 0, 0, 3),
+        )
+        for values in cases:
+            with self.subTest(values=values):
+                gate = SafeModeGate()
+                with self.assertRaises(RoombaDiagnosticError):
+                    gate.establish(*values)
+                self.assertFalse(gate.authorized)
+                self.assertFalse(gate.permits(0.01, 0.0))
+                self.assertTrue(gate.permits(0.0, 0.0))
+
+    def test_safe_gate_revokes_permission_when_safe_mode_is_lost(self):
+        for mode in (0, 1, 3):
+            with self.subTest(mode=mode):
+                gate = SafeModeGate()
+                gate.establish(STOP_ACK_COMPLETE, 0, 0, 2)
+                with self.assertRaises(RoombaDiagnosticError):
+                    gate.observe_mode(mode)
+                self.assertFalse(gate.authorized)
+
+    def test_fragmented_ready_and_initial_stop(self):
+        def fragmented(connection, received):
+            for fragment in (b"R", b"EA", b"DY", b"\n"):
+                connection.sendall(fragment)
+            received.append(receive_exact(connection, len(STOP_PACKET)))
+
+        with LocalRelayServer([fragmented]) as server:
+            transport = RoombaTcpTransport(server.host, server.port)
+            transport.connect()
+            transport.close(send_stop=False)
+        self.assertEqual(server.received, [STOP_PACKET])
+
+    def test_invalid_ready_is_rejected(self):
+        def invalid(connection, _received):
+            connection.sendall(b"BROKEN")
+
+        with LocalRelayServer([invalid]) as server:
+            transport = RoombaTcpTransport(server.host, server.port)
+            with self.assertRaises(ConnectionError):
+                transport.connect()
+            self.assertFalse(transport.connected)
+
+    def test_twist_conversion_limit_and_right_left_order(self):
+        expected_drive = drive_direct_packet(31, 50)
+        expected = bytes([DIAGNOSTIC_MAGIC, GENERATION_DRIVE]) + struct.pack(">I", 1) + expected_drive
+
+        def capture(connection, received):
+            connection.sendall(RELAY_READY)
+            received.append(receive_exact(connection, len(STOP_PACKET)))
+            received.append(receive_exact(connection, len(expected)))
+
+        with LocalRelayServer([capture]) as server:
+            transport = RoombaTcpTransport(server.host, server.port)
+            transport.connect()
+            transport.armed_generation = 1
+            transport.send_twist(
+                0.1, 0.2, track_width_m=0.235, max_speed_mm_s=50
+            )
+            transport.close(send_stop=False)
+        self.assertEqual(server.received, [STOP_PACKET, expected])
+        self.assertEqual(struct.unpack(">Bhh", expected_drive), (145, 50, 31))
+
+    def test_nonzero_drive_requires_arm_generation(self):
+        transport = RoombaTcpTransport("127.0.0.1", 9000)
+        transport.socket = object()
+        with self.assertRaisesRegex(RoombaDiagnosticError, "ARM is required"):
+            transport.send_twist(
+                0.02, 0.0, track_width_m=0.235, max_speed_mm_s=20
+            )
+
+    def test_arm_fragmented_ack_sets_generation_and_tags_drive(self):
+        generation = 1234
+        expected_arm = (
+            bytes([DIAGNOSTIC_MAGIC, CONTROL_ARM])
+            + struct.pack(">I", generation)
+        )
+        expected_drive = (
+            bytes([DIAGNOSTIC_MAGIC, GENERATION_DRIVE])
+            + struct.pack(">I", generation)
+            + drive_direct_packet(20, 20)
+        )
+
+        def arm_and_drive(connection, received):
+            connection.sendall(RELAY_READY)
+            received.append(receive_exact(connection, len(STOP_PACKET)))
+            received.append(receive_exact(connection, len(expected_arm)))
+            response = (
+                bytes([DIAGNOSTIC_MAGIC, CONTROL_ARM_RESPONSE, 1])
+                + struct.pack(">I", generation)
+            )
+            connection.sendall(response[:2])
+            connection.sendall(response[2:])
+            received.append(receive_exact(connection, len(expected_drive)))
+
+        with LocalRelayServer([arm_and_drive]) as server:
+            transport = RoombaTcpTransport(server.host, server.port)
+            transport.connect()
+            self.assertEqual(transport.arm(generation), generation)
+            transport.send_twist(
+                0.02, 0.0, track_width_m=0.235, max_speed_mm_s=20
+            )
+            transport.close(send_stop=False)
+        self.assertEqual(server.received, [STOP_PACKET, expected_arm, expected_drive])
+
+    def test_reconnect_discards_host_arm_generation(self):
+        transport = RoombaTcpTransport("127.0.0.1", 9000)
+        transport.armed_generation = 99
+        transport.close(send_stop=False)
+        self.assertIsNone(transport.armed_generation)
+
+    def test_timeout_and_stop_only_gate(self):
+        now = [10.0]
+        state = CommandState(True, 0.5, lambda: now[0])
+        state.update(0.03, 0.0)
+        self.assertEqual(state.current(), (0.03, 0.0))
+        now[0] += 0.501
+        self.assertIsNone(state.current())
+        state.update(0.02, 0.0)
+        self.assertEqual(state.current(), (0.02, 0.0))
+
+        disabled = CommandState(False, 0.5, lambda: now[0])
+        disabled.update(0.03, 0.0)
+        self.assertIsNone(disabled.current())
+
+    def test_watchdog_mode_forwards_fresh_commands_once_then_stays_silent(self):
+        now = [10.0]
+        state = WatchdogTestCommandState(0.75, lambda: now[0])
+        state.update(0.02, 0.0)
+        self.assertEqual(state.poll(), ("command", (0.02, 0.0)))
+        self.assertEqual(state.poll(), ("silence", None))
+        now[0] += 0.10
+        self.assertEqual(state.poll(), ("silence_start", None))
+        now[0] += 0.399
+        self.assertEqual(state.poll(), ("silence", None))
+        now[0] += 0.251
+        self.assertEqual(state.poll(), ("fallback_stop", None))
+        self.assertEqual(state.poll(), ("silence", None))
+
+    def test_watchdog_mode_new_command_cancels_old_silence_deadline(self):
+        now = [20.0]
+        state = WatchdogTestCommandState(0.75, lambda: now[0])
+        state.update(0.02, 0.0)
+        state.poll()
+        now[0] += 0.6
+        state.update(0.01, 0.0)
+        self.assertEqual(state.poll(), ("command", (0.01, 0.0)))
+        now[0] += 0.5
+        self.assertNotEqual(state.poll()[0], "fallback_stop")
+
+    def test_stop_only_nonzero_twist_sends_only_stop_packets(self):
+        def capture(connection, received):
+            connection.sendall(RELAY_READY)
+            received.append(receive_exact(connection, len(STOP_PACKET) * 2))
+
+        with LocalRelayServer([capture]) as server:
+            transport = RoombaTcpTransport(server.host, server.port)
+            state = CommandState(False, 0.5, lambda: 1.0)
+            transport.connect()
+            state.update(0.5, 2.0)
+            command = state.current()
+            if command is None:
+                transport.send_stop()
+            else:
+                transport.send_twist(
+                    command[0],
+                    command[1],
+                    track_width_m=0.235,
+                    max_speed_mm_s=50,
+                )
+            transport.close(send_stop=False)
+
+        self.assertEqual(server.received, [STOP_PACKET + STOP_PACKET])
+        for offset in range(0, len(server.received[0]), len(STOP_PACKET)):
+            self.assertEqual(
+                struct.unpack(">Bhh", server.received[0][offset : offset + 5]),
+                (145, 0, 0),
+            )
+
+    def test_reconnect_sends_stop_and_requires_new_command(self):
+        with LocalRelayServer([ready_handler, ready_handler]) as server:
+            transport = RoombaTcpTransport(server.host, server.port)
+            state = CommandState(True, 0.5, lambda: 1.0)
+            transport.connect()
+            state.update(0.03, 0.0)
+            transport.close(send_stop=False)
+
+            # This is the reconnect invariant used by the ROS node.
+            state.clear()
+            transport.connect()
+            self.assertIsNone(state.current())
+            transport.close(send_stop=False)
+        self.assertEqual(server.received, [STOP_PACKET, STOP_PACKET])
+
+    def test_send_failure_disconnects_cleanly(self):
+        class FailingSocket:
+            def sendall(self, _packet):
+                raise BrokenPipeError("test disconnect")
+
+            def close(self):
+                pass
+
+        transport = RoombaTcpTransport("127.0.0.1", 9000)
+        transport.socket = FailingSocket()
+        with self.assertRaises(BrokenPipeError):
+            transport.send_stop()
+        transport.close(send_stop=False)
+        self.assertFalse(transport.connected)
+
+    def test_close_sends_stop(self):
+        def capture_both_stops(connection, received):
+            connection.sendall(RELAY_READY)
+            received.append(receive_exact(connection, len(STOP_PACKET) * 2))
+
+        with LocalRelayServer([capture_both_stops]) as server:
+            transport = RoombaTcpTransport(server.host, server.port)
+            transport.connect()
+            transport.close(send_stop=True)
+        self.assertEqual(server.received, [STOP_PACKET + STOP_PACKET])
+
+    def test_stop_ack_confirms_all_stages_and_zero_requested_velocity(self):
+        def diagnostic(connection, received):
+            connection.sendall(RELAY_READY)
+            received.append(receive_exact(connection, 5))
+            received.append(receive_exact(connection, 2))
+            response = bytes([DIAGNOSTIC_MAGIC, DIAGNOSTIC_STOP_RESPONSE, 7])
+            connection.sendall(response[:2])
+            connection.sendall(response[2:] + b"\x00\x00\x00\x00")
+
+        with LocalRelayServer([diagnostic]) as server:
+            transport = RoombaTcpTransport(server.host, server.port)
+            transport.connect()
+            self.assertEqual(transport.verify_stop(), (7, 0, 0))
+            transport.close(send_stop=False)
+        self.assertEqual(
+            server.received,
+            [STOP_PACKET, bytes([DIAGNOSTIC_MAGIC, DIAGNOSTIC_STOP])],
+        )
+
+    def test_stop_ack_failure_is_rejected(self):
+        for status, right, left in ((1, 0, 0), (3, 32767, 32767), (7, 1, 0)):
+            with self.subTest(status=status, right=right, left=left):
+                def diagnostic(connection, _received):
+                    connection.sendall(RELAY_READY)
+                    receive_exact(connection, 5)
+                    receive_exact(connection, 2)
+                    connection.sendall(
+                        bytes([DIAGNOSTIC_MAGIC, DIAGNOSTIC_STOP_RESPONSE, status])
+                        + struct.pack(">hh", right, left)
+                    )
+
+                with LocalRelayServer([diagnostic]) as server:
+                    transport = RoombaTcpTransport(server.host, server.port)
+                    transport.connect()
+                    with self.assertRaises(RoombaDiagnosticError):
+                        transport.verify_stop()
+                    transport.close(send_stop=False)
+
+    def test_stop_ack_failure_reports_fixed_response_bytes(self):
+        def diagnostic(connection, _received):
+            connection.sendall(RELAY_READY)
+            receive_exact(connection, 5)
+            receive_exact(connection, 2)
+            connection.sendall(b"\xd7\x81\x03\x7f\xff\x7f\xff")
+
+        with LocalRelayServer([diagnostic]) as server:
+            transport = RoombaTcpTransport(server.host, server.port)
+            transport.connect()
+            with self.assertRaisesRegex(
+                RoombaDiagnosticError, r"raw=d781037fff7fff"
+            ):
+                transport.verify_stop()
+            transport.close(send_stop=False)
+
+    def test_oi_mode_values_zero_through_three(self):
+        for mode in range(4):
+            with self.subTest(mode=mode):
+                def diagnostic(connection, _received):
+                    connection.sendall(RELAY_READY)
+                    receive_exact(connection, 5)
+                    request = receive_exact(connection, 2)
+                    self.assertEqual(
+                        request, bytes([DIAGNOSTIC_MAGIC, DIAGNOSTIC_OI_MODE])
+                    )
+                    response = bytes(
+                        [DIAGNOSTIC_MAGIC, DIAGNOSTIC_OI_MODE_RESPONSE, mode]
+                    )
+                    connection.sendall(response[:1])
+                    connection.sendall(response[1:])
+
+                with LocalRelayServer([diagnostic]) as server:
+                    transport = RoombaTcpTransport(server.host, server.port)
+                    transport.connect()
+                    self.assertEqual(transport.query_oi_mode(), mode)
+                    transport.close(send_stop=False)
+
+    def test_live_oi_mode_query_uses_fixed_command_and_fragmented_response(self):
+        def diagnostic(connection, received):
+            connection.sendall(RELAY_READY)
+            received.append(receive_exact(connection, 5))
+            received.append(receive_exact(connection, 2))
+            response = bytes(
+                [DIAGNOSTIC_MAGIC, DIAGNOSTIC_OI_MODE_RESPONSE, 2]
+            )
+            connection.sendall(response[:1])
+            connection.sendall(response[1:2])
+            connection.sendall(response[2:])
+
+        with LocalRelayServer([diagnostic]) as server:
+            transport = RoombaTcpTransport(server.host, server.port)
+            transport.connect()
+            self.assertEqual(transport.query_oi_mode(live=True), 2)
+            transport.close(send_stop=False)
+        self.assertEqual(
+            server.received,
+            [
+                STOP_PACKET,
+                bytes([DIAGNOSTIC_MAGIC, DIAGNOSTIC_OI_MODE_LIVE]),
+            ],
+        )
+
+    def test_live_oi_mode_timeout_identifies_wait_and_partial_raw_bytes(self):
+        class PartialTimeoutSocket:
+            def __init__(self):
+                self.calls = 0
+
+            def sendall(self, _packet):
+                pass
+
+            def recv(self, _size):
+                self.calls += 1
+                if self.calls == 1:
+                    return bytes([DIAGNOSTIC_MAGIC])
+                raise socket.timeout("timed out")
+
+        transport = RoombaTcpTransport("127.0.0.1", 9000)
+        transport.socket = PartialTimeoutSocket()
+        with self.assertRaisesRegex(
+            RoombaDiagnosticError,
+            r"live OI mode diagnostic timed out: received 1/3 bytes; raw=d7",
+        ):
+            transport.query_oi_mode(live=True)
+
+    def test_invalid_or_missing_oi_mode_response_is_rejected(self):
+        def invalid(connection, _received):
+            connection.sendall(RELAY_READY)
+            receive_exact(connection, 5)
+            receive_exact(connection, 2)
+            connection.sendall(
+                bytes([DIAGNOSTIC_MAGIC, DIAGNOSTIC_OI_MODE_RESPONSE, 4])
+            )
+
+        def missing(connection, _received):
+            connection.sendall(RELAY_READY)
+            receive_exact(connection, 5)
+            receive_exact(connection, 2)
+
+        for handler in (invalid, missing):
+            with self.subTest(handler=handler.__name__):
+                with LocalRelayServer([handler]) as server:
+                    transport = RoombaTcpTransport(server.host, server.port)
+                    transport.connect()
+                    with self.assertRaises((ConnectionError, RoombaDiagnosticError)):
+                        transport.query_oi_mode()
+                    transport.close(send_stop=False)
+
+
+if __name__ == "__main__":
+    unittest.main()

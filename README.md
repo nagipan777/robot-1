@@ -112,10 +112,42 @@ curl http://127.0.0.1:8766/health
 
 # 仮想固定カメラをYOLO入力にして、従来と同じ検出JSONを送信
 source .venv/bin/activate
-python vision.py --video-url http://127.0.0.1:8766/stream.mjpg
+python vision.py \
+  --video-url http://127.0.0.1:8766/stream.mjpg \
+  --weights datasets/PAI_output/best.pt \
+  --confidence 0.25 \
+  --http-timeout 2.0
 ```
 
 実Webカメラへ戻す場合は`python vision.py --camera 0`を使います。入力切り替えでROS 2側を再ビルド・再起動する必要はありません。MJPEGポート8766はDockerからMacの`127.0.0.1`だけへ公開され、LANには公開されません。
+
+8 GB MacでGazeboとYOLOを同時実行するとMJPEGのフレーム間隔が長くなる場合があります。
+自律走行試験では、同じ固定カメラの安定したスナップショット入力を使用します。
+
+```bash
+./simulation/sim.sh vision-integration-up
+./simulation/sim.sh litter-add can 0.5 0.5
+
+.venv/bin/python vision.py \
+  --video-url http://127.0.0.1:8766/snapshot.jpg \
+  --weights datasets/PAI_output/best.pt \
+  --confidence 0.25 \
+  --http-timeout 6.0 \
+  --quiet
+
+# 別ターミナル。安全確認後だけ一時的に制御を有効化し、終了時に無効へ戻す。
+./simulation/sim.sh yolo-navigation-test
+```
+
+結果は`artifacts/yolo_navigation_test/result.json`へ保存されます。通常起動の
+`control_enabled=false`と`calibration_ready=false`は変更しません。
+
+`datasets/PAI_output/best.pt`はTACO+Gazebo混合学習モデルです。Gazebo固定testでは
+`confidence=0.25`で背景偽陽性0件/枚でした。実写TACO testでは元モデルより性能が低下したため、
+実Webカメラでは従来モデルを既定のまま維持しています。明示する場合は
+`--weights runs/detect/taco/weights/best.pt --confidence 0.5`を指定してください。
+評価の再実行は`.venv/bin/python validate_pai_output.py`で行い、結果は
+`artifacts/pai_output_validation/`へ保存されます。
 
 ### 仮想ゴミと仮想カメラ校正
 
@@ -471,6 +503,17 @@ with RoombaDriver() as driver:
 
 実機へは送信せず、`/cmd_vel_unstamped`を左右輪速度へ変換して確認できます。シミュレーターのコンテナシェルで起動します。
 
+統合経路の既定確認では、まず出力アダプターをdry-runモードで起動します。このモードは計算済みTwistを`/roomba/cmd_vel_dry_run`へ複製するだけで、実機ブリッジ入力`/roomba/cmd_vel_unstamped`へはpublishしません。
+
+```bash
+./simulation/sim.sh cmd-adapter dry_run /cmd_vel_unstamped
+# 別ターミナル
+./simulation/sim.sh shell
+ros2 topic echo /roomba/cmd_vel_dry_run
+```
+
+アダプターの`mode`は`dry_run`、`gazebo`、`roomba`の3値です。独立したNav出力`/nav/cmd_vel_unstamped`を使う場合は、Gazebo向けを`cmd-adapter gazebo /nav/cmd_vel_unstamped`、実機ブリッジ直前を`cmd-adapter roomba /nav/cmd_vel_unstamped`で切り替えます。`roomba`はトピック接続だけであり、ブリッジの`drive_enabled=false`やPico側ロックを解除しません。
+
 ```bash
 /usr/local/bin/roomba-dry-run-adapter
 ```
@@ -501,12 +544,109 @@ ros2 topic echo /roomba/wheel_speeds_dry_run
 - `simulation/vision_turn_controller.py`: 検出座標の変換、Marker、到達判定、速度指令
 - `simulation/map_frame_adapter.py`: `odom`から`map`への姿勢・目標変換と静的TF
 - `simulation/roomba_dry_run_adapter.py`: 左右輪速度への変換と通信途絶停止の検証
+- `simulation/cmd_vel_output_adapter.py`: Nav出力のGazebo／実機ブリッジ／dry-run切替と途絶停止
 - `simulation/vision_controller.yaml`: 校正値と安全設定
 - `simulation/sim.sh`: シミュレーターの起動・停止・確認コマンド
 - `prepare_taco.py`: TACOデータセットの取得とYOLO形式への変換
 - `simulation/README.md`: シミュレーター構成の詳細
 
 ROS 2 Jazzy、Gazebo Harmonic、Create 3の出典と使用コミットは[simulation/README.md](simulation/README.md)に記載しています。
+
+### Pico W TCPブリッジ
+
+Pico W経由でRoomba 680へ接続する場合だけ、シミュレーター起動後に別ターミナルからブリッジを明示起動します。通常起動ではブリッジは起動せず、実機へ速度指令を送りません。
+
+Wi-Fiブリッジを配備するときは、[`pico/pico_relay.py`](pico/pico_relay.py)をPico W上へ`main.py`という名前で保存します。リポジトリ内の[`pico/main.py`](pico/main.py)は既存UARTプローブとして保存してあり、自動的には置換しません。SSIDとパスワードはPico Wへ保存するローカルコピーだけへ設定し、Gitへ追加しないでください。
+
+ホスト側は、Pico WがRoombaのOI初期化を完了して`READY`を返すまで指令を送信しません。接続直後と再接続直後にはSTOPを送信し、その接続上で新しいTwistを受信するまで停止を維持します。
+
+```bash
+# roomba_bridge_tcp.pyをDockerイメージへ反映
+./simulation/sim.sh up
+
+# 別ターミナルで、Pico W側に表示されたIPを指定
+# 既定はdrive_enabled=falseなので、READY確認とSTOP送信だけを行う
+./simulation/sim.sh roomba-tcp PICO_WのIPアドレス
+# ポートを変更する場合
+./simulation/sim.sh roomba-tcp PICO_WのIPアドレス 9000
+```
+
+正常時はPico Wに`relay ready`、ROS 2側に`relay READY; STOP sent`を含む接続ログが表示されます。既定の実機専用入力は`/roomba/cmd_vel_unstamped`（`geometry_msgs/msg/Twist`）で、Create3用`/cmd_vel_unstamped`とは分離されています。`drive_enabled=false`では非ゼロ指令を受信してもSTOP以外を送信しません。終了時は`Ctrl+C`を押すと停止指令を送ってTCP接続を閉じます。
+
+Pico Wは500msのUART停止監視を維持します。TCP上の任意データでは監視時間を延長せず、opcode 145、固定長5バイト、左右速度がOI範囲内のDrive Directフレームを完全受信した場合だけ監視時刻を更新します。
+
+#### STOP限定の実機疎通試験
+
+`sim.sh roomba-tcp`は、ノード側の既定値に依存せず、起動引数として`drive_enabled:=false`と`command_topic:=/roomba/cmd_vel_unstamped`を固定します。IPアドレスとポートだけを引数で変更できます。
+
+実機接続前に次を確認します。
+
+- Roombaを床から浮かせるか、車輪が接地しない安定した台へ置く。
+- 直ちにCLEANボタンを押せる位置で作業する。
+- GP0→Roomba RX、GP1←Roomba TX、GND共通、適切なレベル変換を再確認する。
+- Pico Wのシェルで`Wi-Fi OK`と`listening on <IP>:<PORT>`を確認する。
+- ROS 2側で実機用の駆動許可ノードが他に起動していないことを確認する。
+- `git status`でSSIDまたはパスワードを含む配備用ファイルが追加されていないことを確認する。
+
+承認後に実行するSTOP限定コマンドは次のとおりです。このコマンド自体が実機へ接続するため、承認前には実行しません。
+
+```bash
+# 既定ポート9000
+./simulation/sim.sh roomba-tcp 192.168.0.32
+
+# 任意ポート
+./simulation/sim.sh roomba-tcp 192.168.0.32 9000
+```
+
+期待ログは次のとおりです。
+
+```text
+# Pico W
+connected: (...)
+relay ready
+
+# ROS 2
+Connected to Pico W 192.168.0.32:9000; relay READY; STOP sent
+STOP-only mode: drive_enabled=false; non-zero commands are disabled
+```
+
+別ターミナルで設定を確認できます。
+
+```bash
+ros2 param get /roomba_bridge_tcp drive_enabled
+ros2 param get /roomba_bridge_tcp command_topic
+ros2 topic info -v /roomba/cmd_vel_unstamped
+```
+
+期待値は`drive_enabled: false`と`/roomba/cmd_vel_unstamped`です。終了時はブリッジ側で`Ctrl+C`を押します。正常ならホストがSTOPを送って切断し、Pico Wも切断処理でSTOPを送ります。ホストが応答しない場合はPico W側で`Ctrl+C`を押し、それでも停止を確認できない場合はRoombaのCLEANボタンで停止してください。Wi-Fi切断時はPico Wの500ms watchdogによる停止を待ちますが、Pico W自体の停止・電源断時はソフトウェア停止を保証できません。
+
+#### OIモードとSTOP到達の診断
+
+診断対応版の`pico_relay.py`を配備した後、承認を得てから次を実行します。通常の`roomba-tcp`と同様に`drive_enabled=false`および実機専用トピックが固定され、非ゼロDrive DirectはホストとPico Wの両方で拒否されます。
+
+```bash
+./simulation/sim.sh roomba-tcp-diagnostic 192.168.0.32 9000
+```
+
+診断プロトコルは任意UART転送ではありません。既存のDrive Direct固定長5バイトに加え、次の2種類だけを許可します。
+
+| TCP要求 | 用途 | UART操作 |
+|---|---|---|
+| `D7 01` | STOP到達確認 | STOPを書き、センサ41/42を固定Query Listで読む |
+| `D7 02` | OIモード確認 | 先にSTOPを書き、センサ35だけを読む |
+
+STOP ACKの状態ビットは、`0x01`がPicoでの受信・検証、`0x02`がUARTへの5バイト書込み、`0x04`がRoombaの要求右・左車輪速度センサが両方0だったことを示します。`0x07`かつ左右0の場合だけ成功です。期待ログは次のとおりです。
+
+```text
+Connected to Pico W 192.168.0.32:9000; relay READY; STOP sent
+STOP confirmed: host_sent=true, pico_validated=true, uart_written=true, roomba_requested_right=0, roomba_requested_left=0, ack=0x07
+Roomba OI mode: 2 (Safe)
+STOP-only mode: drive_enabled=false; non-zero commands are disabled
+```
+
+OIモード値は`0=Off`、`1=Passive`、`2=Safe`、`3=Full`です。2以外はエラーログとし、走行は引き続き無効です。診断要求、ACK、センサー応答はPico Wの走行watchdogを延長しません。診断処理は最初にSTOPを送り、UART応答待ちは有限時間です。
+
+センサ41/42の0は、Roomba内部の「要求車輪速度」が0になったことを示す間接確認です。実際の車輪回転や床上速度を直接測定するものではありません。慣性による回転まで確認する場合は、エンコーダ43/44を時間差で読み、tick変化が停止したことを別途検証する必要があります。
 
 ## 既知座標による自律移動試験（第4段階A）
 
@@ -537,3 +677,39 @@ YOLOを使わず、Gazeboの既知座標を入力して共通Navigationを検証
 ```
 
 `/cmd_vel_unstamped`、`/cmd_vel`、`/diffdrive_controller/cmd_vel`、`/odom`、`/hazard_detection`を同一の単調時計基準で記録し、`artifacts/oscillation_diagnostics/`へJSONL、ROSグラフ、反転一覧を保存します。この診断ノードはPublisherを持ちません。
+
+## 複数目標への自律追従試験（第4段階B）
+
+複数の既知目標を順番に追従する試験も、自由空間配置でのみ明示的に実行します。
+
+```bash
+./simulation/sim.sh nav-test-up
+./simulation/sim.sh multi-target-test
+```
+
+試験中は実カメラ検出との競合を避けるため、試験専用コンテナ内の`webcam-bridge`を停止します。A・Bの到達、同一目標再配信時のラッチ保持、新目標でのラッチ解除、各到達後2.2秒のゼロ速度、入力タイムアウト、安全フラグの後処理を検証します。結果は`artifacts/multi_target_test/result.json`と`REPORT.md`へ保存されます。
+# Gazebo YOLOパイロット学習（Google Colab）
+
+学習はMacでは実行せず、MacはGazebo画像・YOLOラベルの生成とZIP作成だけを担当します。
+
+```bash
+./simulation/sim.sh vision-integration-up
+.venv/bin/python build_gazebo_litter_dataset.py
+./simulation/sim.sh stop
+.venv/bin/python package_gazebo_litter_colab.py
+```
+
+生成物は `artifacts/gazebo_litter_pilot_colab.zip` です。このZIPと
+`notebooks/gazebo_litter_pilot_colab.ipynb` をGoogle Driveの
+`MyDrive/robot-1-colab/`へアップロードしてください。ZIPにはデータセット、評価スクリプト、
+既存重みのコピー `weights/original_best.pt` が含まれます。元の
+`runs/detect/taco/weights/best.pt`は変更されません。
+
+ColabではランタイムをGPUへ変更し、ノートブックを上から順に実行します。既定値は
+`imgsz=640`、`batch=8`、`epochs=50`、`patience=10`、`seed=42`、`device=0`です。
+CUDAメモリ不足の場合だけbatchを8→4→2の順に下げます。各epochの`last.pt`はDriveへ
+保存され、ノートブック内の再開セルから`resume=True`で再開できます。
+
+完了後、Drive上の`gazebo_litter_pilot_result.zip`をMacへ戻してください。ZIPには
+`weights/best.pt`、`weights/last.pt`、学習曲線、固定test holdoutでの旧新モデル比較が
+含まれます。Navigationを有効にする前に比較結果を確認してください。

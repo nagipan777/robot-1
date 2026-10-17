@@ -1,0 +1,9 @@
+cmd_vel_output_adapter:
+  ros__parameters:
+    # gazebo | roomba | dry_run. Keep dry_run for integration verification.
+    mode: dry_run
+    input_topic: /nav/cmd_vel_unstamped
+    gazebo_topic: /cmd_vel_unstamped
+    roomba_topic: /roomba/cmd_vel_unstamped
+    dry_run_topic: /roomba/cmd_vel_dry_run
+    command_timeout: 0.5

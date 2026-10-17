@@ -1,0 +1,46 @@
+vision_turn_controller:
+  ros__parameters:
+    # Coordinate validation is read-only. These flags must remain false.
+    control_enabled: false
+    calibration_ready: false
+
+    pose_source: pose_stamped
+    pose_topic: /robot/pose
+    detections_topic: /webcam/detections
+    cmd_vel_topic: /cmd_vel_unstamped
+    target_label: litter
+    detection_target_frame: odom
+    detection_target_topic: /litter/target_odom
+    target_frame: map
+    target_topic: /litter/target
+    target_marker_topic: /litter/target_marker
+    reached_topic: /litter/reached
+
+    # Valid only for the unchanged 640x480 room_camera fixed camera.
+    image_to_odom_homography: [0.0, -0.0124913252039, 2.99167238633, -0.0124826624397, 0.0, 3.9882106495, 0.0, 0.0, 1.0]
+    calibration_image_width: 640
+    calibration_image_height: 480
+    # Snapshot capture + YOLO inference can exceed 1 s under Colima load.
+    max_detection_age: 3.0
+    # Stage 5C target identity gate. Detector jitter within 0.20 m is the same
+    # litter; after a dropout it remains stopped until a distinct target arrives.
+    safe_target_management_enabled: true
+    # The overhead YOLO bbox can shift by more than 10 cm as Create3 enters
+    # the box. Keep one-litter integration runs locked to the first target;
+    # genuinely new targets still need to be more than 20 cm away.
+    target_change_distance: 0.20
+    min_detection_confidence: 0.25
+
+    angular_gain: 1.2
+    max_angular_speed: 0.8
+    angle_tolerance: 0.08
+    arrival_distance: 0.15
+    arrival_epsilon: 0.001
+    # Gazebo rendering plus YOLO can stall for more than 10 s on the 8 GB Mac
+    # while Create3 is moving. This integration-only grace period still stops
+    # on detection loss and must never be reused as the physical watchdog.
+    input_timeout: 20.0
+    control_mode: turn_only
+    linear_gain: 0.4
+    max_linear_speed: 0.08
+    forward_angle_tolerance: 0.15

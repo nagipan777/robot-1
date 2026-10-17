@@ -12,6 +12,9 @@ services:
     environment:
       ROS_DOMAIN_ID: "33"
       ROS_AUTOMATIC_DISCOVERY_RANGE: LOCALHOST
+      # Fast DDS SHM port locks are unreliable under Colima. All ROS nodes in
+      # this service share one network namespace, so localhost UDP is enough.
+      FASTDDS_BUILTIN_TRANSPORTS: UDPv4
       SIM_WORLD: "${SIM_WORLD:-room}"
       VISION_CONTROLLER_CONFIG: "${VISION_CONTROLLER_CONFIG:-/etc/vision-controller.yaml}"
       ROBOT_X: "${ROBOT_X:-0.0}"

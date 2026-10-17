@@ -24,6 +24,8 @@ class KnownTargetConfigurationTests(unittest.TestCase):
         self.assertIn("VISION_CONTROLLER_CONFIG=/etc/vision-controller.sim-camera.yaml", script)
         self.assertIn("ROBOT_Y=-0.75", script)
         self.assertIn("SPAWN_DOCK=false", script)
+        self.assertIn("/world/room/control", script)
+        self.assertIn('pause: false', script)
 
     def test_normal_launch_keeps_original_pose_and_dock_defaults(self):
         root = Path(__file__).resolve().parents[1]

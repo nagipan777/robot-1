@@ -14,6 +14,12 @@ from rclpy.signals import SignalHandlerOptions
 from std_msgs.msg import Bool, String
 from visualization_msgs.msg import Marker
 
+from target_manager import (
+    SafeTargetManager,
+    require_fresh_timestamp,
+    select_best_detection,
+)
+
 
 def yaw_from_quaternion(quaternion):
     siny_cosp = 2.0 * (quaternion.w * quaternion.z + quaternion.x * quaternion.y)
@@ -72,6 +78,10 @@ class VisionTurnController(Node):
         self.declare_parameter("arrival_distance", 0.15)
         self.declare_parameter("arrival_epsilon", 0.0)
         self.declare_parameter("input_timeout", 1.0)
+        self.declare_parameter("max_detection_age", 0.0)
+        self.declare_parameter("safe_target_management_enabled", False)
+        self.declare_parameter("target_change_distance", 0.0)
+        self.declare_parameter("min_detection_confidence", 0.0)
         self.declare_parameter("control_mode", "turn_only")
         self.declare_parameter("linear_gain", 0.4)
         self.declare_parameter("max_linear_speed", 0.08)
@@ -89,6 +99,7 @@ class VisionTurnController(Node):
         self.warned_not_ready = False
         self.output_active = False
         self.target_reached = False
+        self.target_manager = SafeTargetManager()
 
         detections_topic = self.get_parameter("detections_topic").value
         cmd_vel_topic = self.get_parameter("cmd_vel_topic").value
@@ -166,9 +177,30 @@ class VisionTurnController(Node):
             self.get_logger().warning("Ignoring non-finite target coordinates")
             return
         new_target = (message.point.x, message.point.y)
-        if self.control_target != new_target:
-            self.target_reached = False
-        self.control_target = new_target
+        if self.get_parameter("safe_target_management_enabled").value:
+            decision = self.target_manager.consider(
+                new_target,
+                float(self.get_parameter("target_change_distance").value),
+            )
+            if decision == "blocked_same":
+                if (
+                    self.target_manager.reached
+                    and not self.target_manager.suspended
+                    and self.control_target is not None
+                ):
+                    self.target_received_at = time.monotonic()
+                    self.publish_marker(message)
+                self.stop_if_active()
+                return
+            if decision == "new":
+                self.target_reached = False
+                self.control_target = new_target
+            # Keep the first accepted coordinate for an active target so bbox
+            # jitter cannot move the goal or release the arrival latch.
+        else:
+            if self.control_target != new_target:
+                self.target_reached = False
+            self.control_target = new_target
         self.target_received_at = time.monotonic()
         self.publish_marker(message)
 
@@ -176,7 +208,11 @@ class VisionTurnController(Node):
         try:
             payload = json.loads(message.data)
             detections = payload.get("detections", [])
-            self.detection_received_at = time.monotonic()
+            max_detection_age = self.get_parameter("max_detection_age").value
+            if max_detection_age > 0.0:
+                require_fresh_timestamp(
+                    payload["timestamp"], time.time(), max_detection_age
+                )
             expected_width = self.get_parameter("calibration_image_width").value
             expected_height = self.get_parameter("calibration_image_height").value
             if expected_width > 0 and expected_height > 0 and (
@@ -189,24 +225,34 @@ class VisionTurnController(Node):
                     f"{payload.get('image_width')}x{payload.get('image_height')}"
                 )
             target_label = self.get_parameter("target_label").value.lower()
-            litter = [
-                item for item in detections
-                if str(item.get("label", "")).lower() == target_label
-            ]
-            best = max(litter, key=lambda item: float(item.get("confidence", 0.0)), default=None)
+            min_confidence = float(
+                self.get_parameter("min_detection_confidence").value
+            )
+            best = select_best_detection(
+                detections, target_label, min_confidence
+            )
             if best is None:
-                self.clear_target()
-                self.stop_if_active()
+                self.lose_detection()
+                return
+            homography = self.get_parameter("image_to_odom_homography").value
+            if (
+                not self.get_parameter("calibration_ready").value
+                or len(homography) != 9
+                or is_identity_homography(homography)
+            ):
+                self.lose_detection()
+                if not self.warned_not_ready:
+                    self.get_logger().warning(
+                        "Floor calibration is not ready; refusing to publish a metric litter target"
+                    )
+                    self.warned_not_ready = True
                 return
             self.target_pixel = (float(best["center_x"]), float(best["center_y"]))
-            homography = self.get_parameter("image_to_odom_homography").value
-            if len(homography) != 9:
-                raise ValueError("image_to_odom_homography must contain 9 values")
             self.target_odom = transform_point(homography, *self.target_pixel)
+            self.detection_received_at = time.monotonic()
             self.publish_target(float(best.get("confidence", 0.0)))
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
-            self.clear_target()
-            self.stop_if_active()
+            self.lose_detection()
             self.get_logger().warning(f"Invalid detection JSON: {exc}")
 
     def publish_target(self, confidence):
@@ -248,12 +294,14 @@ class VisionTurnController(Node):
         self.marker_publisher.publish(marker)
         self.marker_visible = True
 
-    def clear_target(self):
+    def clear_target(self, preserve_safe_state=False):
         self.target_pixel = None
         self.target_odom = None
         self.control_target = None
         self.target_reached = False
         self.target_received_at = 0.0
+        if not preserve_safe_state:
+            self.target_manager.reset()
         if self.marker_visible:
             marker = Marker()
             marker.header.stamp = self.get_clock().now().to_msg()
@@ -263,6 +311,17 @@ class VisionTurnController(Node):
             marker.action = Marker.DELETE
             self.marker_publisher.publish(marker)
             self.marker_visible = False
+
+    def lose_detection(self):
+        safe_management = self.get_parameter(
+            "safe_target_management_enabled"
+        ).value
+        control_enabled = self.get_parameter("control_enabled").value
+        preserve_safe_state = safe_management and control_enabled
+        if preserve_safe_state:
+            self.target_manager.suspend()
+        self.clear_target(preserve_safe_state=preserve_safe_state)
+        self.stop_if_active()
 
     def publish_stop(self):
         self.publisher.publish(Twist())
@@ -276,7 +335,7 @@ class VisionTurnController(Node):
         now = time.monotonic()
         timeout = self.get_parameter("input_timeout").value
         if self.target_odom is not None and now - self.detection_received_at > timeout:
-            self.clear_target()
+            self.lose_detection()
         inputs_fresh = (
             self.robot_pose is not None
             and self.control_target is not None
@@ -300,6 +359,8 @@ class VisionTurnController(Node):
         reached_now = distance <= arrival_distance + arrival_epsilon
         if reached_now and not self.target_reached:
             self.target_reached = True
+            if self.get_parameter("safe_target_management_enabled").value:
+                self.target_manager.mark_reached()
             self.get_logger().info(
                 f"Target reached: distance={distance:.6f} m, "
                 f"threshold={arrival_distance + arrival_epsilon:.6f} m"
