@@ -1,265 +1,204 @@
-# robot-1 アーキテクチャ
+# robot-1 アーキテクチャ整理（2026-10-17）
 
-この文書は、現在動作しているシミュレーター経路と、今後追加する実機経路を分けて整理したものです。青写真としての将来案ではなく、リポジトリ内の現行コードを基準にしています。
+現在は「YOLOを含むCreate 3の接近・停止が報告済み」「RoombaのTCP/UART駆動と停止出力が確認済み」「両者の実機自律回収への結合は未完了」という段階である。認識、座標、制御、出力先、走行許可、通信を別の責務として扱う。
 
-## 1. システム境界
+この変更は設計文書と図の整理であり、走行コード・配線・安全設定・ファームウェアを書き換えるものではない。
 
-システムは、固定WebカメラとYOLOを動かすMac側と、ROS 2・Gazebo・Create 3を動かすColima/Docker側に分かれます。
+![現行経路と整理後の設計](docs/architecture_2026-10-17.png)
 
-```mermaid
-flowchart TB
-    subgraph mac["MacBook Air M2"]
-        camera["固定Webカメラ<br/>Logicool C270"]
-        vision["vision.py<br/>画像取得・YOLO推論・JSON生成"]
-        calibration["calibrate_floor.py<br/>画素→odomホモグラフィ校正"]
-        config["simulation/vision_controller.yaml"]
+## 1. 調査対象と、コード／ログの読み分け
 
-        camera --> vision
-        camera --> calibration
-        calibration --> config
-    end
-
-    subgraph container["Colima create3 / Docker / ROS 2 Jazzy"]
-        bridge["webcam_bridge.py<br/>HTTP→ROS変換"]
-        frames["map_frame_adapter.py<br/>odom→map変換・静的TF"]
-        controller["vision_turn_controller.py<br/>座標変換・追従・安全停止"]
-        relay["unstamped_cmd_relay.py<br/>Twist→TwistStamped"]
-        create3["Create 3 / Gazebo"]
-        rviz["RViz"]
-
-        bridge -->|"/webcam/detections"| controller
-        controller -->|"/litter/target_odom"| frames
-        create3 -->|"/odom"| frames
-        frames -->|"/robot/pose・/litter/target<br/>frame: map"| controller
-        controller -->|"/cmd_vel_unstamped"| relay
-        relay -->|"/cmd_vel"| create3
-        controller -->|"/litter/target_marker"| rviz
-    end
-
-    vision -->|"HTTP POST /detections<br/>127.0.0.1:8765"| bridge
-    config -.->|"Dockerビルド時にコピー"| controller
-```
-
-Colima VMにはMacのフォルダをマウントしていません。`vision_controller.yaml`を変更した場合は、`./simulation/sim.sh up`でDockerイメージへ反映します。
-
-## 2. 現在のデータフロー
-
-1. `vision.py`が固定Webカメラの画像を取得します。
-2. YOLOが`litter`候補のラベル、信頼度、中心画素、幅、高さを生成します。
-3. `vision.py`が画像サイズと検出配列をJSONにして、HTTPでポート8765へ送ります。
-4. `webcam_bridge.py`がJSONを`std_msgs/msg/String`として`/webcam/detections`へ配信します。
-5. `vision_turn_controller.py`が最高信頼度の`litter`を1件選び、校正済みホモグラフィで画像中心を`odom`床面座標へ変換し、`/litter/target_odom`へ配信します。
-6. `map_frame_adapter.py`が同じ`map←odom`剛体変換を`/odom`と`/litter/target_odom`の数値へ適用します。`frame_id`だけを変更する処理ではありません。
-7. アダプターが`map`座標の`/robot/pose`と`/litter/target`を配信し、同じ変換を静的TFとしても配信します。
-8. 制御ノードが`/robot/pose`と`/litter/target`の位置・角度差を計算します。
-9. 安全条件を満たす場合だけ、`/cmd_vel_unstamped`へ`Twist`を送ります。
-10. `unstamped_cmd_relay.py`が`TwistStamped`へ変換し、Create 3用の`/cmd_vel`へ中継します。
-
-`/litter/target`をいったんROSトピックとして公開・再購読することで、座標変換結果の可視化と追従制御の入力境界を明確にしています。
-
-## 3. インターフェース一覧
-
-| 境界 | 名前 | 型・形式 | Producer | Consumer | 用途 |
-|---|---|---|---|---|---|
-| HTTP | `POST /detections` | JSON | `vision.py` | `webcam_bridge.py` | Macからコンテナへ検出結果を渡す |
-| ROS | `/webcam/detections` | `std_msgs/msg/String` | `webcam_bridge.py` | `vision_turn_controller.py` | 検出JSON |
-| ROS | `/odom` | `nav_msgs/msg/Odometry` | Create 3 / Gazebo | `map_frame_adapter.py` | シミュレーターの元姿勢 |
-| ROS | `/litter/target_odom` | `geometry_msgs/msg/PointStamped` | `vision_turn_controller.py` | `map_frame_adapter.py` | `odom`座標系の中間目標 |
-| ROS | `/robot/pose` | `geometry_msgs/msg/PoseStamped` | `map_frame_adapter.py` | `vision_turn_controller.py` | `map`座標系のロボット姿勢 |
-| ROS | `/litter/target` | `geometry_msgs/msg/PointStamped` | `map_frame_adapter.py` | `vision_turn_controller.py`、確認用CLI | `map`座標系の目標点 |
-| ROS | `/litter/target_marker` | `visualization_msgs/msg/Marker` | `vision_turn_controller.py` | RViz | ごみ目標の球表示 |
-| ROS | `/litter/reached` | `std_msgs/msg/Bool` | `vision_turn_controller.py` | 確認用CLI、将来の回収処理 | 目標から15 cm以内の到達判定 |
-| ROS | `/cmd_vel_unstamped` | `geometry_msgs/msg/Twist` | `vision_turn_controller.py` | `unstamped_cmd_relay.py` | 制御ノードの速度出力 |
-| ROS | `/cmd_vel` | `geometry_msgs/msg/TwistStamped` | `unstamped_cmd_relay.py` | Create 3 | シミュレーターへの速度指令 |
-
-検出JSONの概形は次のとおりです。
-
-```json
-{
-  "timestamp": 0.0,
-  "image_width": 1280,
-  "image_height": 720,
-  "detections": [
-    {
-      "label": "litter",
-      "confidence": 0.9,
-      "center_x": 640.0,
-      "center_y": 360.0,
-      "width": 100.0,
-      "height": 80.0
-    }
-  ]
-}
-```
-
-## 4. 座標系と校正
-
-画像上の画素座標`(u, v)`と、シミュレーター床面の`odom (x, y)`は直接一致しません。`calibrate_floor.py`で床面の4点を対応付け、3×3ホモグラフィ行列を求めます。
-
-```text
-画像中心画素 (u, v)
-        │
-        │ image_to_odom_homography
-        ▼
-床面目標 (x, y) in odom
-```
-
-校正値の保存先は`simulation/vision_controller.yaml`です。単位行列は未校正として拒否されます。校正時と運用時の画像サイズが設定されている場合、解像度が一致しない入力も拒否されます。
-
-カメラの位置、向き、高さ、画角、解像度を変更した場合は再校正が必要です。
-
-## 5. 追従制御
-
-制御ノードには2つの動作モードがあります。
-
-| モード | 並進 | 旋回 | 使用段階 |
-|---|---:|---:|---|
-| `turn_only` | 常に0 | 目標方向へ比例制御 | 最初の方向確認 |
-| `approach` | 最大0.08 m/s | 目標方向へ比例制御 | 障害物のない範囲での低速接近 |
-
-`approach`でも、角度誤差が`forward_angle_tolerance`（既定0.15 rad）を超える間は前進しません。距離が`arrival_distance`（既定0.15 m）以内になると停止し、`/litter/reached=true`を配信します。
-
-この制御は経路計画や障害物回避を行いません。目標までの直線上に障害物がないことを人が確認する、シミュレーター限定のPoCです。
-
-## 6. 安全条件
-
-速度を出すには、次の条件をすべて満たす必要があります。
-
-```mermaid
-flowchart LR
-    enabled{"control_enabled?"}
-    calibrated{"calibration_ready?"}
-    matrix{"非単位行列?"}
-    pose{"姿勢が1秒以内?"}
-    target{"目標が1秒以内?"}
-    output["速度指令を計算"]
-    stop["Twist()で停止"]
-
-    enabled -->|Yes| calibrated
-    calibrated -->|Yes| matrix
-    matrix -->|Yes| pose
-    pose -->|Yes| target
-    target -->|Yes| output
-
-    enabled -->|No| stop
-    calibrated -->|No| stop
-    matrix -->|No| stop
-    pose -->|No| stop
-    target -->|No| stop
-```
-
-次の場合はゼロ速度を送ります。
-
-- `control_enabled`または`calibration_ready`が`false`
-- ホモグラフィが単位行列
-- `/robot/pose`または`/litter/target`が1秒より古い
-- YOLO検出が消えた、または検出JSONが不正
-- 目標へ到達した
-- 未知の`control_mode`が指定された
-- 制御ノードがSIGINTまたはSIGTERMで終了する
-
-設定ファイルの安全フラグは既定で両方`false`です。コンテナを再作成すると無効状態へ戻ります。
-
-## 7. コンポーネントの責務
-
-| ファイル | 実行場所 | 現在の責務 |
+| 対象 | 参照点 | 位置づけ |
 |---|---|---|
-| `vision.py` | Mac | カメラ取得、YOLO推論、表示、JSON生成、HTTP送信 |
-| `calibrate_floor.py` | Mac | 4点クリック、ホモグラフィ計算、結果確認、YAML保存 |
-| `simulation/webcam_bridge.py` | Docker | HTTP受信、最低限のJSON検証、ROS String配信 |
-| `simulation/map_frame_adapter.py` | Docker | 姿勢と目標への`map←odom`変換、静的TF配信 |
-| `simulation/vision_turn_controller.py` | Docker | 検出選択、座標変換、目標配信、姿勢入力、追従制御、安全停止 |
-| `simulation/unstamped_cmd_relay.py` | Docker | `Twist`から`TwistStamped`への変換 |
-| `simulation/roomba_dry_run_adapter.py` | Docker、手動起動 | 左右輪変換、比率維持制限、指令途絶停止、ログ出力 |
-| `simulation/cmd_vel_output_adapter.py` | Docker、手動起動 | Nav速度出力をGazebo、実機ブリッジ直前、またはdry-run専用トピックへ排他的にルーティング |
-| `simulation/start-simulation.sh` | Docker | Create 3、Gazebo、RVizの起動 |
-| `simulation/supervisord.conf` | Docker | 各プロセスの起動順と監視 |
-| `simulation/vision_controller.yaml` | Dockerへコピー | トピック、校正値、制御値、安全フラグ |
+| GitHub `main` | `2e04b7e` | 実機ドライバ、姿勢変換、模擬出力、提出用記録ツールを含む |
+| `feature/yolo-roomba-dry-run-integration` | `eb74cb1` | 今回の実装調査の主対象。`main`より2コミット先。出力切替、TCPブリッジ、停止ラッチ、ARM世代番号を含む |
+| 10/16進捗レポート | 15:14 JST版 | YOLOを含むCreate 3提出候補試行、129テスト、成果物の報告 |
+| 10/17 UART経過レポート | 18:15 JST更新版 | 115200 bpsでの応答、watchdog後の旧指令再転送、ラッチ導入方針の報告 |
 
-添付されていた整理案の`vision_app/camera.py`、`vision_app/transport.py`、`perception.py`、`geometry.py`、`control.py`、`robot_runtime/ros/turn_controller.py`は、現時点ではリポジトリに存在しません。現在のPoCを検証している間は上表の実ファイルが正です。
+ログの「ラッチ実装未確認」に対し、開発ブランチには`MotionLatch`とその単体テストがある。したがって**コードは実装済み、Picoへの同一版の書込みと実機での再駆動防止の合格は未確認**と表現する。リポジトリ、Macの作業コピー、Pico上の`main.py`は同じ版とは限らない。
 
-## 8. シミュレーターと実機の差し替え境界
+## 2. 現行の実行境界
+
+| 実行場所 | 主な処理・入口 | 境界 |
+|---|---|---|
+| Mac / Python | `vision.py`、校正・認識評価・学習準備ツール | USBカメラ、またはコンテナのMJPEG映像。検出JSONをHTTP送信 |
+| Colima / Docker / ROS 2 Jazzy | `simulation/sim.sh` → Compose → Supervisor、ROSノード、Gazebo | localhostのDDS、HTTP 8765、MJPEG 8766。PicoへはTCP接続 |
+| Pico W / MicroPython | 正式なリレーソースは`pico/pico_relay.py` | Wi-Fi TCP 9000 → 許可した固定フレームのみUARTへ送信 |
+| Roomba 680 | OI Safe、Drive Direct、センサー | UART。左右輪速度の単位はmm/s、OIの順序は右輪→左輪 |
+| Mac / FLINT（予備経路） | `roomba_driver.py` + `odometry.py` | pyserialによる直接UART。ROSのTCP経路と別の通信所有者 |
+
+Supervisorは既存の制御・姿勢変換・Create 3用relay等を起動する。`cmd_vel_output_adapter`と`roomba_bridge_tcp`は追加コマンドで起動する構成であり、コンテナが起動しただけで実機経路が完成するわけではない。
+
+`pico/main.py`は既存の手動UARTプローブで、Wi-Fiリレーではない。リレーは`pico_relay.py`のローカル配布コピーをPico上で`main.py`として保存する。認証情報をリポジトリへ保存せず、配布版のコミット・設定・起動ログを別途記録する。
+
+## 3. 現行の論理フロー
 
 ```mermaid
-flowchart LR
-    target["床面目標<br/>PointStamped相当"] --> controller["共通の追従制御"]
-
-    subgraph simulation["実装済み：シミュレーター"]
-        odom["/odom"] --> frames["map_frame_adapter"]
-        frames --> pose_sim["/robot/pose<br/>frame: map"]
-        pose_sim --> controller
-        controller --> unstamped["/cmd_vel_unstamped"]
-        unstamped --> relay["TwistStamped relay"]
-        relay --> gazebo["Create 3 / Gazebo"]
-    end
-
-    subgraph hardware["未実装：実機"]
-        aruco["固定カメラのArUco検出"] -.-> pose["/robot/pose<br/>PoseStamped, frame: map"]
-        pose -.-> controller
-        controller --> adapter["cmd_vel_output_adapter"]
-        adapter --> bridge["roomba_bridge_tcp<br/>drive_enabled=falseが既定"]
-        bridge -.-> roomba["Roomba 680"]
-    end
+flowchart TD
+    image["Mac: vision.py / YOLO"] -->|"HTTP JSON :8765"| ingress["webcam_bridge.py"]
+    ingress -->|"/webcam/detections"| projection["vision_turn_controller: 検出選択・床面投影"]
+    projection -->|"/litter/target_odom"| frames["map_frame_adapter.py"]
+    simpose["Create 3 /odom"] --> frames
+    frames -->|"/robot/pose と /litter/target: map"| nav["同じ制御ノード: 目標管理・接近・停止"]
+    nav -->|"現行既定 /cmd_vel_unstamped"| relay["unstamped_cmd_relay.py"]
+    relay -->|"TwistStamped /cmd_vel"| gazebo["Create 3 / Gazebo"]
+    nav -.->|"明示設定で出力を分離"| router["cmd_vel_output_adapter.py"]
+    router -->|"dry_run"| inspect["速度を観察するだけ"]
+    router -->|"roomba"| tcp["roomba_bridge_tcp.py"]
+    tcp -->|"固定フレーム TCP :9000"| pico["pico_relay.py: 許可・停止監視"]
+    pico -->|"UART OI"| robot["Roomba 680"]
 ```
 
-シミュレーターでは`map_frame_adapter.py`が`/robot/pose`を生成します。ArUcoを検出して同じ`map`座標の`PoseStamped`を生成するノードは未実装です。
+図の投影とNavigationは論理的に分けているが、現行では両方とも`vision_turn_controller.py`内にある。画像→odom→map→制御という往復は、数学的な循環ではなく、同じノードが投影結果を公開し、変換後の目標を購読する構成である。
 
-実機対応で追加が必要なものは次のとおりです。
+実機の`/robot/pose`を安定供給するROSアダプターは未完了。ローカルのエンコーダー計算や`odometry_log.csv`だけでは、このトピックが生成されるわけではない。ArUco姿勢ノードも将来案である。
 
-- ルンバ上面ArUcoマーカーの姿勢推定
-- ごみ目標とロボット姿勢を同じ床面座標系へそろえる処理
-- MacからRoomba 680へ速度・停止指令を渡す実機通信アダプター
-- USB、UART、電圧変換、配線、通信プロトコルの検証
-- 実機用の非常停止と速度・加速度制限
-- 吸引または回収動作と、その完了判定
+## 4. 各ファイルの責務
 
-`/litter/reached=true`は到達判定であり、実物のごみを回収できたことを意味しません。
+| 機能 | 現在の所有者 | 整理する境界 |
+|---|---|---|
+| 映像取得・YOLO・JSON送信 | `vision.py` | カメラ／推論／HTTPを関数・モジュール単位で分離。起動CLIは維持 |
+| 最高信頼度の候補・時刻検証・同一目標保持 | `simulation/target_manager.py` | ROS非依存の目標管理を維持 |
+| 画素→床面、角度、速度計算、ROS、表示 | `simulation/vision_turn_controller.py`（438行） | 投影・制御計算をpure coreへ。ROS nodeは入出力・入力寿命・状態管理 |
+| odom→mapの数値変換・静的TF | `simulation/map_frame_adapter.py` | 目標と姿勢に同一変換を適用。frame名だけを置換しない |
+| 出力先の選択 | `simulation/cmd_vel_output_adapter.py` | `gazebo` / `dry_run` / `roomba`の1つを選択 |
+| ROS指令・Safe確認・再接続 | `simulation/roomba_bridge_tcp.py` | ROS層とTCP transportの分離は既にある。通常運転とwatchdog試験を分ける |
+| TCPフレーム・ACK・ARM・指令寿命 | `simulation/roomba_tcp_transport.py` | ROS非依存を維持。Picoとのプロトコル仕様の基準にする |
+| 差動二輪変換 | `simulation/differential_drive.py` | ここが正本。ルート`differential_drive.py`は互換import済み |
+| 模擬左右輪出力 | `simulation/roomba_dry_run_adapter.py` | 独自の二輪計算が残る。正本へ統一し、100 mm/s等の表示用制限を明示 |
+| 有線UART・自己位置計算 | `roomba_driver.py` / `odometry.py` | TCP実機経路と分離。実機姿勢アダプターを作るならここから数値を公開 |
+| 目標までの距離・角度 | `navigation.py` | `calculate_goal`の正本。`goal_math.py`は互換import済み |
+| Pico通信・プロトコル・走行ラッチ・UART | `pico/pico_relay.py`（556行） | parser、状態機械、UART、ネットワークを分ける。ROSやYOLOは持ち込まない |
+| 検証・動画・表示 | `*_test.py`、`recording_status.py`等 | ランタイムとは別のツール群。`artifacts/`は試行の証拠 |
 
-## 9. 将来のコード分割案
+前回作成した`vision_app/`・`robot_runtime/`の整理パッチは、今回の調査ブランチには入っていない。その時のファイル配置を現行実装として扱わない。
 
-PoCの動作確認後に責務を分離する場合は、ROSやHTTPに依存しない計算部分から切り出します。これは推奨境界であり、まだ実装されていません。
+## 5. データ契約
 
-```text
-vision_app/
-  camera.py       # カメラ取得
-  detector.py     # YOLO推論と共通Detection生成
-  transport.py    # HTTP送信
+| 境界 | 型・単位 | Producer → Consumer | 注意点 |
+|---|---|---|---|
+| `POST /detections` | JSON、画像座標px、`timestamp`はUNIX秒 | `vision.py` → HTTP bridge | 画像サイズ・対象ラベル・時刻を保存 |
+| `/webcam/detections` | `std_msgs/String` | bridge → controller | `litter`・confidenceによる候補選択 |
+| `/litter/target_odom` | `PointStamped`、m、frame=odom | 投影 → map adapter | ホモグラフィはカメラ配置・解像度に依存 |
+| `/robot/pose` | `PoseStamped`、m、frame=map | map adapter → controller | 実機姿勢の差替えは未完了 |
+| `/litter/target` | `PointStamped`、m、frame=map | map adapter → controller | 目標と姿勢が同一座標系であること |
+| `/litter/reached` | Bool | controller → 記録・表示 | 到達判定。吸引・回収成功を意味しない |
+| `/nav/cmd_vel_unstamped` | Twist、m/s・rad/s | controller → 出力切替 | 推奨する統一境界。現行既定では未使用 |
+| `/cmd_vel_unstamped` | Twist | 既存controller または出力切替 → Create 3 relay | 複数の速度所有者を同時に置かない |
+| `/roomba/cmd_vel_dry_run` | Twist | 出力切替 → 観察 | 車輪駆動を行わない。左右輪表示の旧dry-runとは別物 |
+| `/roomba/cmd_vel_unstamped` | Twist | 出力切替 → TCP bridge | これだけで走行許可は成立しない |
+| `/roomba/arm_generation` | UInt32 | 明示的な操作 → bridge | 走行用Twistとは別の許可境界 |
+| TCP / Pico | 固定フレーム | transport ↔ relay | READY、STOP診断、OI診断、ARM、世代付きDrive |
+| UART / Roomba | OI Drive Direct、右・左の符号付き16 bit mm/s | Pico → Roomba | 最新実測115200 bps・8N1。コード既定との差あり |
 
-robot_core/
-  perception.py   # litter選択
-  geometry.py     # ホモグラフィ、角度、距離
-  control.py      # turn_only / approachの速度計算
+TCPの世代付きDriveは`D7 05 + generation(uint32 big-endian) + 145/right/left`の11バイト。旧5バイトDriveはSTOPの互換性だけを残し、非ゼロ値を拒否する。ARMは`D7 04 + generation`。診断は固定の許可リストであり、任意OIや任意UARTバイトを転送するAPIではない。
 
-robot_runtime/
-  ros/controller_node.py  # ROSメッセージとの変換、安全状態、Publisher/Subscriber
-  ros/webcam_bridge.py    # HTTP→ROS境界
-  simulation/relay.py     # Create 3シミュレーター用変換
-  hardware/adapter.py     # 将来のRoomba実機通信
+現行の世代番号は走行許可の世代であって、個々の指令のsequenceや送信期限ではない。Twistもヘッダーなしなので、受信時刻が新しいことと、送信元で新しい指令であることを同一視しない。
+
+## 6. 整理後の標準経路（提案、未適用）
+
+```mermaid
+flowchart TD
+    perception["検出・床面投影"] --> target["目標管理 /map"]
+    pose["姿勢入力 /map"] --> nav["共通Navigation"]
+    target --> nav
+    nav -->|"/nav/cmd_vel_unstamped"| select["出力切替: 1モードのみ"]
+    select --> sim["gazebo: Create 3 relay"]
+    select --> dry["dry_run: 観察"]
+    select --> hw["roomba: Safe確認・TCP bridge"]
+    hw --> firmware["Pico: ARM・停止ラッチ・watchdog"]
+    firmware --> oi["Roomba OI"]
 ```
 
-分割時にも、外部インターフェースのトピック名・型と、安全フラグが既定で無効という条件は維持します。
+整理の中心は**制御結果を一度だけ出し、出力先だけを差し替えること**。NavigationにUART・Wi-Fi・Picoの状態を直接混ぜない。Picoに画像認識・目標選択・ROSを載せない。
 
-## 10. 起動単位
+現在はcontrollerの既定出力とYAMLが`/cmd_vel_unstamped`で、`sim.sh cmd-adapter`の既定入力も同じ。そのためdry-run adapterを追加しても、既存Create 3への出力は止まらない。`cmd_vel_output_adapter.yaml`の既定入力`/nav/...`とも差がある。
 
-Mac側：
+移行時はcontroller出力とadapter入力を`/nav/...`へ同時にそろえ、modeごとの単独起動プロファイルを作る。gazeboモードで入出力を同じトピックにしない。既存の提出用試行を再現できる互換プロファイルを残し、新しい標準を検証してから切り替える。
 
-```bash
-source .venv/bin/activate
-python vision.py
+## 7. 停止を担当する4層
+
+| 層 | 所有する判断 | 現状と限界 |
+|---|---|---|
+| Navigation | 未校正・入力切れ・到達・対象消失 | 到達ラッチは目標の状態。Picoの停止ラッチとは別 |
+| 出力切替 | 指令の非有限値・受信timeout | 既定0.5秒。出力先トピックへSTOP |
+| TCP bridge | 走行許可、STOP ACK、OI Safe、指令寿命、再接続 | `drive_enabled=false`が既定。ACK/SafeとARMが必要 |
+| Pico | 固定フレーム検査、世代照合、500 ms監視、切断 | `ALLOW_NONZERO_DRIVE=False`が既定。停止状態を保持する最後のソフト層 |
+
+```mermaid
+stateDiagram-v2
+    [*] --> STOPPED
+    STOPPED --> ARMED: 新しい世代のARMを受理
+    ARMED --> STOPPED: 通常STOP
+    ARMED --> LATCHED_STOP: watchdog・切断・異常
+    STOPPED --> LATCHED_STOP: 切断・異常
+    LATCHED_STOP --> ARMED: 明示ARMと以前より大きい世代
+    LATCHED_STOP --> LATCHED_STOP: 旧世代Drive・通常STOP・診断
 ```
 
-Docker側：
+ARMはPico側ロックが開いている場合だけ受理される。bridge側でも有効化・接続・Safe gateを要求する。再接続だけでは許可しない。Picoの`highest_generation`はプロセス内メモリで、電源断をまたぐ永続的な世代管理ではない。
 
-```bash
-./simulation/sim.sh up
-```
+STOP ACKの`0x07`は「Pico検証」「UART書込み」「Roombaの要求左右速度41/42がゼロ」の組合せである。要求速度ゼロはエンコーダーや目視による物理停止確認とは異なる。500 msは実装上の監視設定であり、各種UART診断を同じイベントループで実行するため、全条件での厳密な停止時間保証とはしない。
 
-Docker内ではSupervisorが次を別プロセスとして管理します。
+## 8. コードとログから見つかった整理対象
 
-- Create 3 / Gazebo / RViz
-- `webcam-bridge`
-- `vision-turn-controller`
-- `unstamped-cmd-relay`
-- Xvfb / Openbox / x11vnc / noVNC
+| 優先度 | 対象 | 根拠・対応 |
+|---|---|---|
+| P0 | 配布版と通信設定の一致 | 最新実機成功115200に対し`pico_relay.py:BAUD=19200`。`roomba_uart_probe.py`は115200。起動ログにソース版・baud・ロック・プロトコル版を残し、個体ごとの設定へ分離 |
+| P0 | ラッチの実機合格 | 10/17ログで旧非ゼロ指令が再転送。最新コードと56件の関連テストにはラッチあり。配布同一性、遅延Drive、再接続、再ARMを含む実機検証が必要 |
+| P0 | ARM直後のSTOPの意味 | bridgeの`on_arm()`は保留指令を消し、次の`tick()`は指令なしならSTOPを送ってARMを消す。ARMと最初のTwistの到着順で許可が消え得る。明示状態遷移として扱い、ノードの時系列テストを追加する対象 |
+| P1 | 出力所有者の一本化 | 既定controllerはCreate 3へ直結。adapterを追加するだけでは排他切替にならない。`/nav/...`と起動プロファイルを整える |
+| P1 | 共通計算の正本 | 二輪変換は一部共通化済みだが旧dry-runに重複。角度・変換もnode間に重複。単位と丸め・制限値を契約にする |
+| P1 | 大きな責務の分離 | controller 438行、Pico relay 556行。pure coreを先に切り出し、ROSやMicroPythonとの境界を薄くする |
+| P1 | 検証方法の整理 | 一部テストは文字列検査・AST抽出・fake hardware。実関数、node時系列、実機結果を別の検証層にする |
+| P2 | ドキュメントの同期 | 既存README・ARCHITECTURE・PAI_SUBMISSIONには古い段階の説明が残る。例：回収モデル未実装、通信adapter未実装という説明は開発ブランチの実装と一致しない |
 
-詳細な操作手順と安全な追従テストは[README.md](README.md)を参照してください。
+`generation`があっても、同じARM世代内の遅延指令は識別できない。個別sequence・期限・再ARMの運用は追加設計事項。特に古いARMそのものを自動再送して停止を解除する設計にしない。ここでは実装変更していない。
+
+## 9. 到達点と未完了を分離する
+
+| 項目 | コード・報告に基づく判定 |
+|---|---|
+| YOLOを含むCreate 3統合試行 | 10/15試行の成功報告あり。confidence 0.7559、269.35秒、停止距離0.150985 m、到達後3.2秒の非ゼロ指令0、hazard0。今回MP4本体は再検証していない |
+| 単一／A-B目標・座標変換 | Gazeboでの段階合格報告あり。実機の合格ではない |
+| 認識精度全般 | 3対象比較は失敗例あり。1回の統合試行成功と一般的な精度を区別する |
+| 450枚の再学習データ | 準備済み。10/16記録では既存モデル維持・再学習後回し。追加の学習成功は未確認 |
+| FLINT駆動・オドメトリ | 有線の駆動・エンコーダー取得の成功実績。TCP経路の実機姿勢ROS入力とは別 |
+| Pico UART | 最新115200 bpsで`3B 71`を3回受信、電池15.217 Vの報告 |
+| TCP STOP・Safe | 送信・検証・UART書込み、Safe=2の報告 |
+| watchdog | 503/504 msでSTOPをUART出力したログあり。旧コードで発火後の再駆動防止は未達 |
+| 停止ラッチ・世代ARM | 最新開発コードと単体テストに実装。実機への同一版配布・停止保持は未合格扱い |
+| 物理停止・電気条件 | 要求速度・UARTログと分けて確認する。1 kΩ直列をレベル変換完了とは扱わない |
+| 実機の自律回収 | 未完了。実機姿勢、認識目標、運動・停止、回収動作の統合が残る |
+
+## 10. 整理後のディレクトリ案（未移動）
+
+| 将来の置き場 | 内容 | 現在からの移行 |
+|---|---|---|
+| `robot_core/` | geometry、navigation、target管理、odometry、二輪変換 | ROS非依存部分から移す。旧importを互換shimで維持 |
+| `vision_app/` | capture、detector、detection HTTP client | `vision.py`のCLIを残して委譲 |
+| `ros_nodes/` | 投影・姿勢・navigation・出力切替・TCP bridge・可視化 | nodeを責務ごとに分ける。いきなり全て別プロセス化する必要はない |
+| `transports/` | TCP protocol/client、USB serial driver | ROSの型をimportしない |
+| `firmware/pico/` | protocol parser、motion latch、UART、network、起動 | CPythonのcoreをそのまま持ち込まずMicroPython制約を守る |
+| `configs/` | sim、dry-run、roomba、個体別通信・校正 | 個体設定と試行時overrideを分離。認証情報は対象外 |
+| `simulation/` | Docker、起動、worlds、models、公式ソース | Docker build contextが現在ここにあることに注意 |
+| `tools/` / `tests/` / `artifacts/` | 校正・評価・記録／テスト／証拠 | ルートの`test_*.py`は実機を動かすCLIもあるため、unit testと区別 |
+
+現在のDockerは`simulation/`内のPythonファイルを`/usr/local/bin`へコピーする方式である。ルートに`robot_core`を作るだけではコンテナからimportできない。共通ライブラリをコンテナへ配布する方法を決め、importとDocker COPYを同じ変更で移す。将来の配置を現行構成と混同しない。
+
+## 11. 実装へ移る順序と完了条件
+
+1. **版と個体設定を固定**：実機成功baud、配布元コミット、実際のPicoコード、プロトコルと両ロックの値を記録。電気条件も別の確認項目にする。
+2. **停止状態機械を先に検証**：単体テストに加えARM直後の待機、watchdog、古いDrive、再接続、再ARMをnodeとPicoの両側で検証。UARTの非ゼロ再出力0と物理停止維持を別々に記録する。
+3. **Navigation出力を一本化**：`/nav/...`からadapterを1つ通し、gazebo/dry-run/roombaの各モードで不要な速度Publisherがいないことを確認する。
+4. **pure coreを抽出**：まず二輪変換とgeometry、次にprojection/control。挙動を変えず互換入口と既存試行を維持する。
+5. **実機姿勢を差し替え**：校正したエンコーダー推定またはカメラ姿勢をmapにそろえ、固定目標で短距離・停止を確認してからYOLO目標へ進む。
+6. **認識改善・提出整理**：再学習は安全経路の優先項目後。固定testで比較し、成功試行と認識の一般精度を分けて記録する。
+
+## 12. 今回の確認範囲
+
+- 分離したworktreeで`eb74cb1`を調査。元の作業コピーの変更は保持。
+- `python -m unittest discover -s tests -v`：144件として報告、141成功・3モジュールが`cv2`不在でimportエラー。全件成功ではない。
+- 停止・通信・出力切替に絞った4モジュール：56件成功（Pico protocol、TCP transport、ROS bridgeの構造検査、output adapter）。
+- ROS/Gazebo、Pico/Roomba、実際の無線・車輪・電圧・提出動画の再実行はしていない。
+- 文書・図のみ変更。安全ロック、baud、速度上限、走行コードは変更していない。
