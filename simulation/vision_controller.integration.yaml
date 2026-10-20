@@ -1,8 +1,10 @@
 vision_turn_controller:
   ros__parameters:
+    use_sim_time: true
     # Coordinate validation is read-only. These flags must remain false.
     control_enabled: false
     calibration_ready: false
+    dry_run_enabled: false
 
     pose_source: pose_stamped
     pose_topic: /robot/pose
@@ -10,8 +12,9 @@ vision_turn_controller:
     cmd_vel_topic: /cmd_vel_unstamped
     target_label: litter
     detection_target_frame: odom
-    detection_target_topic: /litter/target_odom
+    detection_target_topic: /litter/target_candidate_odom
     target_frame: map
+    candidate_target_topic: /litter/target_candidate
     target_topic: /litter/target
     target_marker_topic: /litter/target_marker
     reached_topic: /litter/reached
@@ -40,6 +43,8 @@ vision_turn_controller:
     # while Create3 is moving. This integration-only grace period still stops
     # on detection loss and must never be reused as the physical watchdog.
     input_timeout: 20.0
+    robot_guard_radius: 0.5  # metres; stage-1 self-detection safety guard
+    max_robot_pose_age: 1.0  # seconds
     control_mode: turn_only
     linear_gain: 0.4
     max_linear_speed: 0.08

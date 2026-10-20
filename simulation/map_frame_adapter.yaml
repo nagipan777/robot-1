@@ -4,8 +4,8 @@ map_frame_adapter:
     map_frame: map
     odom_topic: /odom
     pose_topic: /robot/pose
-    target_input_topic: /litter/target_odom
-    target_output_topic: /litter/target
+    target_input_topic: /litter/target_candidate_odom
+    target_output_topic: /litter/target_candidate
 
     # Rigid 2D transform map <- odom. Simulation currently uses the same origin,
     # but the adapter still applies this transform numerically and publishes TF.

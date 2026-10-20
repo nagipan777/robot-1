@@ -74,7 +74,7 @@ class CoordinateMonitor(Node):
         self.nonzero_commands = []
         self.create_subscription(String, "/webcam/detections", self.on_detection, 10)
         self.create_subscription(
-            PointStamped, "/litter/target_odom", self.on_target_odom, 10
+            PointStamped, "/litter/target_candidate_odom", self.on_target_odom, 10
         )
         self.create_subscription(PointStamped, "/litter/target", self.on_target_map, 10)
         self.create_subscription(Odometry, "/odom", self.on_odom, 10)
@@ -210,14 +210,17 @@ def main():
         graph = {
             topic: node.publishers(topic)
             for topic in (
-                "/litter/target_odom",
+                "/litter/target_candidate_odom",
+                "/litter/target_candidate",
                 "/litter/target",
                 "/roomba/cmd_vel_unstamped",
             )
         }
         result["publishers"] = graph
-        if len(graph["/litter/target_odom"]) != 1:
-            raise RuntimeError("/litter/target_odom has competing publishers")
+        if len(graph["/litter/target_candidate_odom"]) != 1:
+            raise RuntimeError("/litter/target_candidate_odom has competing publishers")
+        if len(graph["/litter/target_candidate"]) != 1:
+            raise RuntimeError("/litter/target_candidate has competing publishers")
         if len(graph["/litter/target"]) != 1:
             raise RuntimeError("/litter/target has competing publishers")
         if graph["/roomba/cmd_vel_unstamped"]:

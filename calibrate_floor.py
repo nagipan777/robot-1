@@ -10,6 +10,7 @@ DEFAULT_FLOOR_POINTS = np.float32([
     [2.5, 1.0], [2.5, -1.0], [0.5, -1.0], [0.5, 1.0],
 ])
 CORNER_NAMES = ["TOP-LEFT", "TOP-RIGHT", "BOTTOM-RIGHT", "BOTTOM-LEFT"]
+VALIDATION_FLOOR_POINT = np.float32([1.5, 0.0])
 
 
 def parse_point(value):
@@ -23,14 +24,19 @@ def parse_point(value):
 
 
 def compute_homography(pixels, floor):
+    pixels = np.asarray(pixels, dtype=np.float32)
+    if len(pixels) == 4 and not cv2.isContourConvex(pixels.reshape(-1, 1, 2)):
+        raise ValueError("クリックした四隅が凸四角形になっていません。順序を確認してください")
     homography, _ = cv2.findHomography(
-        np.asarray(pixels, dtype=np.float32),
+        pixels,
         np.asarray(floor, dtype=np.float32),
         method=0,
     )
     if homography is None or not np.isfinite(homography).all():
         raise ValueError("ホモグラフィを計算できません。四隅の配置を確認してください")
     homography /= homography[2, 2]
+    if not np.isfinite(homography).all():
+        raise ValueError("ホモグラフィに有限でない値が含まれています")
     if np.allclose(homography, np.eye(3), atol=1e-6):
         raise ValueError("単位行列は有効な校正として保存できません")
     return homography
@@ -99,7 +105,7 @@ def print_verification(pixels, floor, homography):
     return image_center
 
 
-def draw_overlay(frame, pixels, floor, homography, litter=None):
+def draw_overlay(frame, pixels, floor, homography, validation_pixel=None, litter=None):
     height, width = frame.shape[:2]
     panel_width = 440
     view = np.zeros((height, width + panel_width, 3), dtype=frame.dtype)
@@ -147,13 +153,16 @@ def draw_overlay(frame, pixels, floor, homography, litter=None):
         cv2.putText(view, "Click inside the camera image", (panel_x, 262),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
     else:
-        image_center = verification(pixels, floor, homography)[2]
-        center_pixel = tuple(np.rint(image_center).astype(int))
-        cv2.drawMarker(view, center_pixel, (0, 165, 255), cv2.MARKER_CROSS, 24, 2)
-        cv2.putText(view, "CENTER -> odom (1.50, 0.00)",
-                    (center_pixel[0] + 12, center_pixel[1] - 12),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 165, 255), 2)
-        cv2.putText(view, "CHECK: S=save  R=retry  Q=cancel",
+        if validation_pixel is not None:
+            center_pixel = tuple(np.rint(validation_pixel).astype(int))
+            actual = transform([validation_pixel], homography)[0]
+            error = np.linalg.norm(actual - VALIDATION_FLOOR_POINT)
+            cv2.drawMarker(view, center_pixel, (0, 165, 255), cv2.MARKER_CROSS, 24, 2)
+            cv2.putText(view, f"VALIDATION error={error:.3f} m",
+                        (center_pixel[0] + 12, center_pixel[1] - 12),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 165, 255), 2)
+        cv2.putText(view, "CLICK validation point" if validation_pixel is None
+                    else "CHECK: S=save  R=retry  Q=cancel",
                     (panel_x, 230), cv2.FONT_HERSHEY_SIMPLEX,
                     0.55, (0, 255, 255), 2)
     return view
@@ -180,21 +189,36 @@ def interactive_calibration(camera, floor, output, model=None, confidence=0.5):
     window = "Floor calibration"
     pixels = []
     homography = None
+    validation_pixel = None
     image_size = [0, 0]
     display_scale = [1.0]
 
     def on_mouse(event, x, y, _flags, _data):
-        nonlocal homography
+        nonlocal homography, validation_pixel
         image_x = x / display_scale[0]
         image_y = y / display_scale[0]
         if (
             event != cv2.EVENT_LBUTTONUP
-            or len(pixels) >= 4
             or image_x < 0
             or image_y < 0
             or image_x >= image_size[0]
             or image_y >= image_size[1]
         ):
+            return
+        if homography is not None:
+            if validation_pixel is not None:
+                return
+            validation_pixel = np.float32([image_x, image_y])
+            actual = transform([validation_pixel], homography)[0]
+            error = float(np.linalg.norm(actual - VALIDATION_FLOOR_POINT))
+            print(
+                f"独立検証点: pixel=({image_x:.1f}, {image_y:.1f}) -> "
+                f"odom=({actual[0]:.3f}, {actual[1]:.3f}), "
+                f"expected=(1.500, 0.000), error={error:.4f} m"
+            )
+            print("検証点誤差を確認し、Sで保存、Rでやり直してください")
+            return
+        if len(pixels) >= 4:
             return
         pixels.append([float(image_x), float(image_y)])
         target = floor[len(pixels) - 1]
@@ -207,7 +231,7 @@ def interactive_calibration(camera, floor, output, model=None, confidence=0.5):
             try:
                 homography = compute_homography(pixels, floor)
                 print_verification(np.float32(pixels), floor, homography)
-                print("画面で四隅と中央を確認し、Sで保存、Rでやり直してください")
+                print("実測した中央の検証点 (1.50, 0.00) をクリックしてください")
             except ValueError as exc:
                 print(f"校正エラー: {exc}")
                 pixels.clear()
@@ -224,7 +248,10 @@ def interactive_calibration(camera, floor, output, model=None, confidence=0.5):
                 raise SystemExit("カメラ画像を取得できません")
             image_size[:] = [frame.shape[1], frame.shape[0]]
             annotated, litter = detect_litter(model, frame, confidence)
-            view = draw_overlay(annotated, np.float32(pixels), floor, homography, litter)
+            view = draw_overlay(
+                annotated, np.float32(pixels), floor, homography,
+                validation_pixel, litter,
+            )
             display_scale[0] = min(1.0, 1400 / view.shape[1], 850 / view.shape[0])
             if display_scale[0] < 1.0:
                 view = cv2.resize(view, None, fx=display_scale[0], fy=display_scale[0])
@@ -236,12 +263,15 @@ def interactive_calibration(camera, floor, output, model=None, confidence=0.5):
             if key == ord("r"):
                 pixels.clear()
                 homography = None
+                validation_pixel = None
                 print("クリック点をリセットしました")
-            if key == ord("s") and homography is not None:
+            if key == ord("s") and homography is not None and validation_pixel is not None:
                 save_to_controller_config(output, homography, image_size)
                 print(f"校正結果を保存しました: {output}")
                 print("control_enabled=false, calibration_ready=false を維持しました")
                 return True
+            if key == ord("s") and homography is not None and validation_pixel is None:
+                print("保存前に独立検証点 (1.50, 0.00) をクリックしてください")
     finally:
         capture.release()
         cv2.destroyAllWindows()

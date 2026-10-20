@@ -1,10 +1,15 @@
 import argparse
 import unittest
 
+import cv2
+import numpy as np
+
 from vision import (
     DEFAULT_CONFIDENCE,
     SimulatorConnection,
     confidence_threshold,
+    create_aruco_detector,
+    detect_aruco,
     open_video_capture,
     select_video_source,
 )
@@ -40,6 +45,23 @@ class VideoSourceTest(unittest.TestCase):
 
     def test_network_capture_helper_is_available_for_reconnects(self):
         self.assertTrue(callable(open_video_capture))
+
+    def test_aruco_is_opt_in_and_uses_existing_payload(self):
+        source = (__import__("pathlib").Path(__file__).resolve().parents[1] / "vision.py").read_text()
+        self.assertIn('default=-1', source)
+        self.assertIn('"aruco_detections": aruco_detections', source)
+
+    def test_synthetic_aruco_detection_and_id_filter(self):
+        dictionary = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
+        marker = cv2.aruco.generateImageMarker(dictionary, 0, 240)
+        frame = np.full((480, 640, 3), 255, dtype=np.uint8)
+        frame[120:360, 200:440] = cv2.cvtColor(marker, cv2.COLOR_GRAY2BGR)
+        detector = create_aruco_detector("DICT_4X4_50")
+        matches, _corners, _ids = detect_aruco(detector, frame, 0)
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(matches[0]["marker_id"], 0)
+        mismatch, _corners, _ids = detect_aruco(detector, frame, 1)
+        self.assertEqual(mismatch, [])
 
 
 if __name__ == "__main__":

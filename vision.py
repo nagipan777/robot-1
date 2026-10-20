@@ -40,6 +40,37 @@ def open_video_capture(source, network_stream=False):
     return cv2.VideoCapture(source)
 
 
+def create_aruco_detector(dictionary_name):
+    if not hasattr(cv2, "aruco"):
+        raise RuntimeError("OpenCV ArUco support is unavailable; install opencv-contrib-python")
+    dictionary_id = getattr(cv2.aruco, dictionary_name, None)
+    if dictionary_id is None or not dictionary_name.startswith("DICT_"):
+        raise ValueError("unsupported ArUco dictionary: {}".format(dictionary_name))
+    dictionary = cv2.aruco.getPredefinedDictionary(dictionary_id)
+    parameters = cv2.aruco.DetectorParameters()
+    return cv2.aruco.ArucoDetector(dictionary, parameters)
+
+
+def detect_aruco(detector, frame, marker_id):
+    corners, ids, _rejected = detector.detectMarkers(frame)
+    detections = []
+    if ids is None:
+        return detections, corners, ids
+    for marker_corners, detected_id in zip(corners, ids.flatten()):
+        if int(detected_id) != marker_id:
+            continue
+        detections.append(
+            {
+                "marker_id": int(detected_id),
+                "corners": [
+                    [round(float(point[0]), 2), round(float(point[1]), 2)]
+                    for point in marker_corners.reshape(4, 2)
+                ],
+            }
+        )
+    return detections, corners, ids
+
+
 class SimulatorConnection:
     def __init__(self, url, timeout=0.2):
         self.url = url
@@ -77,6 +108,8 @@ def main():
         "--video-url",
         help="MJPEGなどの映像URL（例: http://127.0.0.1:8766/stream.mjpg）",
     )
+    parser.add_argument("--width", type=int, default=1280, help="要求する画像幅（既定: 1280）")
+    parser.add_argument("--height", type=int, default=960, help="要求する画像高さ（既定: 960）")
     parser.add_argument("--preview", action="store_true", help="検出せずにカメラ映像のみ表示")
     parser.add_argument(
         "--quiet",
@@ -105,9 +138,22 @@ def main():
         default=DEFAULT_CONFIDENCE,
         help="YOLO検出信頼度の下限（既定: 0.5）",
     )
+    parser.add_argument(
+        "--aruco-marker-id",
+        type=int,
+        default=-1,
+        help="ArUco ID (-1 disables detection; default: -1)",
+    )
+    parser.add_argument(
+        "--aruco-dictionary",
+        default="DICT_4X4_50",
+        help="OpenCV ArUco dictionary name (default: DICT_4X4_50)",
+    )
     args = parser.parse_args()
     if args.http_timeout <= 0.0:
         parser.error("--http-timeout must be greater than zero")
+    if args.width <= 0 or args.height <= 0:
+        parser.error("--width and --height must be positive")
     simulator = (
         SimulatorConnection(args.simulator, args.http_timeout)
         if args.simulator
@@ -124,10 +170,24 @@ def main():
         if model.task != "detect":
             parser.error("物体検出用のYOLOモデルを --weights で指定してください。")
         print(f"YOLOモデルを読み込みました: {args.weights}")
+    aruco_detector = None
+    if args.aruco_marker_id >= 0:
+        try:
+            aruco_detector = create_aruco_detector(args.aruco_dictionary)
+        except (RuntimeError, ValueError) as exc:
+            parser.error(str(exc))
+        print(
+            "ArUco detector enabled: dictionary={} marker_id={}".format(
+                args.aruco_dictionary, args.aruco_marker_id
+            )
+        )
 
     video_source = select_video_source(args.camera, args.video_url)
     source_name = args.video_url if args.video_url else f"カメラ {args.camera}"
     cap = open_video_capture(video_source, network_stream=bool(args.video_url))
+    if not args.video_url:
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, args.width)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, args.height)
     try:
         if not cap.isOpened():
             raise SystemExit(
@@ -162,10 +222,23 @@ def main():
                 continue
             last_frame_at = time.monotonic()
             if not received_frame:
+                actual_height, actual_width = frame.shape[:2]
+                if (actual_width, actual_height) != (args.width, args.height):
+                    raise SystemExit(
+                        f"カメラ解像度が校正条件と異なります: "
+                        f"要求 {args.width}x{args.height}, 実際 {actual_width}x{actual_height}"
+                    )
                 print("映像を取得しました。映像ウィンドウで q または Esc を押すと終了します。")
                 received_frame = True
 
             detections = []
+            aruco_detections = []
+            aruco_corners = None
+            aruco_ids = None
+            if aruco_detector is not None:
+                aruco_detections, aruco_corners, aruco_ids = detect_aruco(
+                    aruco_detector, frame, args.aruco_marker_id
+                )
             if model is not None:
                 result = model.predict(frame, conf=args.confidence, verbose=False)[0]
                 for box in result.boxes:
@@ -190,6 +263,8 @@ def main():
                             f"画像座標: ({center_x:.0f}, {center_y:.0f})"
                         )
                 frame = result.plot()
+            if aruco_detector is not None and aruco_ids is not None:
+                cv2.aruco.drawDetectedMarkers(frame, aruco_corners, aruco_ids)
 
             if simulator is not None:
                 simulator.send(
@@ -198,6 +273,7 @@ def main():
                         "image_width": int(frame.shape[1]),
                         "image_height": int(frame.shape[0]),
                         "detections": detections,
+                        "aruco_detections": aruco_detections,
                     }
                 )
 

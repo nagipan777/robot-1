@@ -27,6 +27,31 @@ def select_best_detection(detections, target_label, min_confidence):
     )
 
 
+def evaluate_robot_guard(target, robot_position, radius):
+    """Return an acceptance decision for a target in the robot pose frame."""
+    radius = float(radius)
+    if radius < 0.0 or not math.isfinite(radius):
+        raise ValueError("robot_guard_radius must be finite and non-negative")
+    distance = math.hypot(
+        float(target[0]) - float(robot_position[0]),
+        float(target[1]) - float(robot_position[1]),
+    )
+    return {
+        "accepted": distance > radius,
+        "reason": None if distance > radius else "robot_proximity",
+        "distance": distance,
+    }
+
+
+def format_robot_proximity_log(frame, target, confidence, distance, timestamp):
+    return (
+        "Detection rejected: reason=robot_proximity "
+        f"target_{frame}=({target[0]:.3f}, {target[1]:.3f}) "
+        f"confidence={confidence:.3f} distance={distance:.3f}m "
+        f"timestamp={timestamp:.6f}"
+    )
+
+
 class SafeTargetManager:
     """Keep a stable target identity across detector jitter and dropouts."""
 

@@ -2,6 +2,8 @@ import unittest
 
 from simulation.target_manager import (
     SafeTargetManager,
+    evaluate_robot_guard,
+    format_robot_proximity_log,
     require_fresh_timestamp,
     select_best_detection,
 )
@@ -10,6 +12,33 @@ from simulation.target_manager import (
 class SafeTargetManagerTests(unittest.TestCase):
     def setUp(self):
         self.manager = SafeTargetManager()
+
+    def test_robot_detection_inside_guard_is_rejected(self):
+        decision = evaluate_robot_guard((0.10, 0.0), (0.0, 0.0), 0.5)
+        self.assertFalse(decision["accepted"])
+        self.assertEqual(decision["reason"], "robot_proximity")
+        log = format_robot_proximity_log(
+            "map", (0.10, 0.0), 0.91, decision["distance"], 1234.5
+        )
+        for expected in (
+            "reason=robot_proximity",
+            "target_map=(0.100, 0.000)",
+            "confidence=0.910",
+            "distance=0.100m",
+            "timestamp=1234.500000",
+        ):
+            self.assertIn(expected, log)
+
+    def test_litter_outside_guard_is_accepted(self):
+        decision = evaluate_robot_guard((0.80, 0.0), (0.0, 0.0), 0.5)
+        self.assertTrue(decision["accepted"])
+        self.assertIsNone(decision["reason"])
+
+    def test_real_litter_inside_guard_is_safely_rejected(self):
+        decision = evaluate_robot_guard((0.30, 0.40), (0.0, 0.0), 0.5)
+        self.assertFalse(decision["accepted"])
+        self.assertEqual(decision["reason"], "robot_proximity")
+        self.assertAlmostEqual(decision["distance"], 0.5)
 
     def test_bbox_jitter_is_same_target(self):
         self.assertEqual(self.manager.consider((1.0, 2.0), 0.10), "new")
