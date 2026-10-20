@@ -192,9 +192,10 @@ case "${1:-help}" in
         ;;
     esac
     if [ "$rotation_authorized" = true ]; then
+      arm_generation="$(date +%s)"
       "${compose[@]}" exec simulator bash -lc \
         'source /opt/create3_ws/install/setup.bash; exec /usr/local/bin/roomba-wheel-lift-test --ros-args -p mode:="$1" "${@:2}"' \
-        -- "$mode" -p allow_rotation:=true -p confirmation:=WHEELS_LIFTED
+        -- "$mode" -p allow_rotation:=true -p confirmation:=WHEELS_LIFTED -p arm_generation:="$arm_generation"
     else
       "${compose[@]}" exec simulator bash -lc \
         'source /opt/create3_ws/install/setup.bash; exec /usr/local/bin/roomba-wheel-lift-test --ros-args -p mode:="$1"' \

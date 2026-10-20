@@ -94,6 +94,7 @@ class RoombaBridgeTcpIntegrationTests(unittest.TestCase):
         self.assertIn("if not self.drive_enabled", method)
         self.assertIn("not self.safe_gate.authorized", method)
         self.assertIn("self.transport.arm(generation)", method)
+        self.assertIn("self.arm_deadline", method)
         self.assertNotIn("self.connect()", method)
 
     def test_both_nonzero_drive_locks_remain_disabled(self):

@@ -52,6 +52,7 @@ class RoombaBridgeTcp(Node):
         self.declare_parameter("max_speed_mm_s", 50)
         self.declare_parameter("command_timeout", 0.5)
         self.declare_parameter("safe_check_interval", 0.25)
+        self.declare_parameter("arm_hold_timeout", 1.0)
         # Compatibility guard only. The normal bridge never disables its
         # host-side timeout; Pico-only watchdog tests require a separate path.
         self.declare_parameter("watchdog_test_mode", False)
@@ -68,6 +69,7 @@ class RoombaBridgeTcp(Node):
         self.max_speed_mm_s = self.get_parameter("max_speed_mm_s").value
         self.command_timeout = self.get_parameter("command_timeout").value
         self.safe_check_interval = self.get_parameter("safe_check_interval").value
+        self.arm_hold_timeout = self.get_parameter("arm_hold_timeout").value
         self.watchdog_test_mode = self.get_parameter("watchdog_test_mode").value
         self.watchdog_test_silence = self.get_parameter(
             "watchdog_test_silence"
@@ -83,6 +85,8 @@ class RoombaBridgeTcp(Node):
             raise ValueError("command_timeout must be positive")
         if self.safe_check_interval <= 0.0:
             raise ValueError("safe_check_interval must be positive")
+        if not 0.2 <= self.arm_hold_timeout <= 2.0:
+            raise ValueError("arm_hold_timeout must be from 0.2 to 2.0 seconds")
         if self.watchdog_test_mode and not (
             self.drive_enabled
             and self.watchdog_test_confirmation == "WHEELS_LIFTED"
@@ -106,6 +110,7 @@ class RoombaBridgeTcp(Node):
         self.next_safe_check = 0.0
         self.next_retry = 0.0
         self.watchdog_preflight_logged = False
+        self.arm_deadline = 0.0
         self.create_subscription(Twist, self.command_topic, self.on_cmd, COMMAND_QOS)
         self.create_subscription(UInt32, self.arm_topic, self.on_arm, COMMAND_QOS)
         self.create_timer(0.05, self.tick)  # 20Hz
@@ -124,6 +129,7 @@ class RoombaBridgeTcp(Node):
     def clear_motion_authorization(self):
         self.safe_gate.reset()
         self.next_safe_check = 0.0
+        self.arm_deadline = 0.0
 
     def connect(self):
         # Invalidate commands received before or during a reconnect.  Only a
@@ -204,6 +210,7 @@ class RoombaBridgeTcp(Node):
             self.watchdog_test_state.update(msg.linear.x, msg.angular.z)
         else:
             self.command_state.update(msg.linear.x, msg.angular.z)
+        self.arm_deadline = 0.0
 
     def on_arm(self, msg: UInt32):
         generation = int(msg.data)
@@ -218,6 +225,7 @@ class RoombaBridgeTcp(Node):
         try:
             self.transport.arm(generation)
             self.clear_command()
+            self.arm_deadline = time.monotonic() + self.arm_hold_timeout
             self.get_logger().warn(
                 "ARM accepted for this TCP session: generation=%d" % generation
             )
@@ -236,6 +244,11 @@ class RoombaBridgeTcp(Node):
 
         command = self.command_state.current()
         if command is None:
+            if (
+                self.transport.armed_generation is not None
+                and time.monotonic() < self.arm_deadline
+            ):
+                return
             self.send_stop()
             return
 
@@ -312,7 +325,9 @@ class RoombaBridgeTcp(Node):
         self.get_logger().warn(f"送信失敗、再接続します: {error}")
         self.clear_command()
         self.clear_motion_authorization()
-        self.transport.close(send_stop=False)
+        # A missing, corrupt, or negative per-Drive ACK is a safety failure.
+        # Attempt one raw STOP before closing; close() suppresses socket errors.
+        self.transport.close(send_stop=True)
         self.next_retry = time.monotonic() + 1.0
 
     def handle_safety_failure(self, error):

@@ -16,11 +16,16 @@ DIAGNOSTIC_OI_MODE = 0x02
 DIAGNOSTIC_OI_MODE_LIVE = 0x03
 CONTROL_ARM = 0x04
 GENERATION_DRIVE = 0x05
+SEQUENCED_DRIVE = 0x06
 DIAGNOSTIC_STOP_RESPONSE = 0x81
 DIAGNOSTIC_OI_MODE_RESPONSE = 0x82
 CONTROL_ARM_RESPONSE = 0x84
+SEQUENCED_DRIVE_RESPONSE = 0x86
 DIAGNOSTIC_ERROR = 0xE0
 ARM_ACCEPTED = 0x01
+DRIVE_ACK_VALIDATED = 0x01
+DRIVE_ACK_UART_WRITTEN = 0x02
+DRIVE_ACK_COMPLETE = DRIVE_ACK_VALIDATED | DRIVE_ACK_UART_WRITTEN
 STOP_ACK_VALIDATED = 0x01
 STOP_ACK_UART_WRITTEN = 0x02
 STOP_ACK_ROBOT_ZERO = 0x04
@@ -30,6 +35,7 @@ STOP_ACK_COMPLETE = (
 STOP_DIAGNOSTIC_RESPONSE_SIZE = 7
 OI_MODE_RESPONSE_SIZE = 3
 ARM_RESPONSE_SIZE = 7
+DRIVE_RESPONSE_SIZE = 13
 
 
 class RoombaDiagnosticError(Exception):
@@ -74,6 +80,23 @@ class SafeModeGate:
 def drive_direct_packet(left_mm_s, right_mm_s):
     """Return OI Drive Direct bytes; the protocol order is right, then left."""
     return struct.pack(">Bhh", OI_DRIVE_DIRECT, right_mm_s, left_mm_s)
+
+
+def crc16_ccitt(data):
+    crc = 0xFFFF
+    for byte in data:
+        crc ^= byte << 8
+        for _ in range(8):
+            crc = (
+                ((crc << 1) ^ 0x1021) & 0xFFFF
+                if crc & 0x8000
+                else (crc << 1) & 0xFFFF
+            )
+    return crc
+
+
+def with_crc(payload):
+    return payload + struct.pack(">H", crc16_ccitt(payload))
 
 
 class CommandState:
@@ -173,6 +196,7 @@ class RoombaTcpTransport:
         self.socket_factory = socket_factory
         self.socket = None
         self.armed_generation = None
+        self.drive_sequence = 0
 
     @property
     def connected(self):
@@ -181,6 +205,7 @@ class RoombaTcpTransport:
     def connect(self):
         self.close(send_stop=False)
         self.armed_generation = None
+        self.drive_sequence = 0
         connection = None
         try:
             connection = self.socket_factory(
@@ -192,7 +217,7 @@ class RoombaTcpTransport:
             )
             if ready != RELAY_READY:
                 raise ConnectionError("unexpected Pico W response: {!r}".format(ready))
-            connection.settimeout(1.0)
+            connection.settimeout(2.0)
             self.socket = connection
             self.send_stop()
         except Exception:
@@ -207,6 +232,7 @@ class RoombaTcpTransport:
     def send_stop(self):
         self.send_packet(STOP_PACKET)
         self.armed_generation = None
+        self.drive_sequence = 0
 
     def arm(self, generation):
         if not isinstance(generation, int) or isinstance(generation, bool):
@@ -234,6 +260,7 @@ class RoombaTcpTransport:
                 )
             )
         self.armed_generation = generation
+        self.drive_sequence = 0
         return generation
 
     def verify_stop(self):
@@ -289,11 +316,41 @@ class RoombaTcpTransport:
             return
         if self.armed_generation is None:
             raise RoombaDiagnosticError("non-zero drive rejected: ARM is required")
-        self.send_packet(
-            bytes([DIAGNOSTIC_MAGIC, GENERATION_DRIVE])
-            + struct.pack(">I", self.armed_generation)
+        sequence = self.drive_sequence + 1
+        payload = (
+            bytes([DIAGNOSTIC_MAGIC, SEQUENCED_DRIVE])
+            + struct.pack(">II", self.armed_generation, sequence)
             + packet
         )
+        self.send_packet(with_crc(payload))
+        response = self._receive_exact(
+            self.socket, DRIVE_RESPONSE_SIZE, operation="Drive ACK"
+        )
+        if len(response) != DRIVE_RESPONSE_SIZE:
+            raise RoombaDiagnosticError("invalid Drive ACK size")
+        body, supplied_crc = response[:-2], struct.unpack(">H", response[-2:])[0]
+        if crc16_ccitt(body) != supplied_crc:
+            raise RoombaDiagnosticError(
+                "Drive ACK checksum mismatch: raw={}".format(response.hex())
+            )
+        if body[:2] != bytes([DIAGNOSTIC_MAGIC, SEQUENCED_DRIVE_RESPONSE]):
+            raise RoombaDiagnosticError(
+                "unexpected Drive ACK: raw={}".format(response.hex())
+            )
+        status = body[2]
+        ack_generation, ack_sequence = struct.unpack(">II", body[3:11])
+        if (
+            status != DRIVE_ACK_COMPLETE
+            or ack_generation != self.armed_generation
+            or ack_sequence != sequence
+        ):
+            raise RoombaDiagnosticError(
+                "Drive rejected: status=0x{:02x}, generation={}, sequence={}".format(
+                    status, ack_generation, ack_sequence
+                )
+            )
+        self.drive_sequence = sequence
+        return sequence
 
     def send_packet(self, packet):
         if self.socket is None:
@@ -304,6 +361,7 @@ class RoombaTcpTransport:
         connection = self.socket
         self.socket = None
         self.armed_generation = None
+        self.drive_sequence = 0
         if connection is None:
             return
         if send_stop:

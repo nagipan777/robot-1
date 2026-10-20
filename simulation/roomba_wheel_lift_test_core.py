@@ -7,6 +7,7 @@ MAX_WHEEL_SPEED_MM_S = 20
 MAX_DRIVE_DURATION_S = 1.0
 WATCHDOG_SILENCE_S = 0.75
 ROTATION_CONFIRMATION = "WHEELS_LIFTED"
+ATTENDED_FLOOR_CONFIRMATION = "ATTENDED_FLOOR_CLEARED"
 DEFAULT_SUBSCRIBER_WAIT_TIMEOUT_S = 5.0
 
 
@@ -32,7 +33,7 @@ class SubscriberConnectionGate:
 
 
 class WheelLiftTestProfile:
-    MODES = ("stop", "rejection", "rotate", "watchdog")
+    MODES = ("stop", "rejection", "rotate", "watchdog", "floor_straight")
 
     def __init__(
         self,
@@ -63,12 +64,18 @@ class WheelLiftTestProfile:
             raise ValueError("drive_duration_s must be > 0 and <= 1.0")
         if wheel_base_m <= 0.0:
             raise ValueError("wheel_base_m must be positive")
-        if mode in ("rotate", "watchdog") and not (
-            allow_rotation and confirmation == ROTATION_CONFIRMATION
+        required_confirmation = (
+            ATTENDED_FLOOR_CONFIRMATION
+            if mode == "floor_straight"
+            else ROTATION_CONFIRMATION
+        )
+        if mode in ("rotate", "watchdog", "floor_straight") and not (
+            allow_rotation and confirmation == required_confirmation
         ):
             raise PermissionError(
-                "rotate/watchdog requires allow_rotation=true and "
-                "confirmation=WHEELS_LIFTED"
+                "{} requires allow_rotation=true and confirmation={}".format(
+                    mode, required_confirmation
+                )
             )
 
         self.mode = mode

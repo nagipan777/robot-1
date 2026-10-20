@@ -13,6 +13,9 @@ from simulation.roomba_tcp_transport import (
     DIAGNOSTIC_STOP_RESPONSE,
     CONTROL_ARM,
     CONTROL_ARM_RESPONSE,
+    DRIVE_ACK_COMPLETE,
+    SEQUENCED_DRIVE,
+    SEQUENCED_DRIVE_RESPONSE,
     GENERATION_DRIVE,
     RELAY_READY,
     STOP_PACKET,
@@ -22,6 +25,7 @@ from simulation.roomba_tcp_transport import (
     STOP_ACK_COMPLETE,
     WatchdogTestCommandState,
     drive_direct_packet,
+    with_crc,
 )
 
 
@@ -135,12 +139,28 @@ class RoombaTcpTransportTests(unittest.TestCase):
 
     def test_twist_conversion_limit_and_right_left_order(self):
         expected_drive = drive_direct_packet(31, 50)
-        expected = bytes([DIAGNOSTIC_MAGIC, GENERATION_DRIVE]) + struct.pack(">I", 1) + expected_drive
+        expected = with_crc(
+            bytes([DIAGNOSTIC_MAGIC, SEQUENCED_DRIVE])
+            + struct.pack(">II", 1, 1)
+            + expected_drive
+        )
 
         def capture(connection, received):
             connection.sendall(RELAY_READY)
             received.append(receive_exact(connection, len(STOP_PACKET)))
             received.append(receive_exact(connection, len(expected)))
+            connection.sendall(
+                with_crc(
+                    bytes(
+                        [
+                            DIAGNOSTIC_MAGIC,
+                            SEQUENCED_DRIVE_RESPONSE,
+                            DRIVE_ACK_COMPLETE,
+                        ]
+                    )
+                    + struct.pack(">II", 1, 1)
+                )
+            )
 
         with LocalRelayServer([capture]) as server:
             transport = RoombaTcpTransport(server.host, server.port)
@@ -167,9 +187,9 @@ class RoombaTcpTransportTests(unittest.TestCase):
             bytes([DIAGNOSTIC_MAGIC, CONTROL_ARM])
             + struct.pack(">I", generation)
         )
-        expected_drive = (
-            bytes([DIAGNOSTIC_MAGIC, GENERATION_DRIVE])
-            + struct.pack(">I", generation)
+        expected_drive = with_crc(
+            bytes([DIAGNOSTIC_MAGIC, SEQUENCED_DRIVE])
+            + struct.pack(">II", generation, 1)
             + drive_direct_packet(20, 20)
         )
 
@@ -184,6 +204,18 @@ class RoombaTcpTransportTests(unittest.TestCase):
             connection.sendall(response[:2])
             connection.sendall(response[2:])
             received.append(receive_exact(connection, len(expected_drive)))
+            connection.sendall(
+                with_crc(
+                    bytes(
+                        [
+                            DIAGNOSTIC_MAGIC,
+                            SEQUENCED_DRIVE_RESPONSE,
+                            DRIVE_ACK_COMPLETE,
+                        ]
+                    )
+                    + struct.pack(">II", generation, 1)
+                )
+            )
 
         with LocalRelayServer([arm_and_drive]) as server:
             transport = RoombaTcpTransport(server.host, server.port)
@@ -194,6 +226,31 @@ class RoombaTcpTransportTests(unittest.TestCase):
             )
             transport.close(send_stop=False)
         self.assertEqual(server.received, [STOP_PACKET, expected_arm, expected_drive])
+
+    def test_drive_ack_failure_is_rejected_and_sequence_is_not_advanced(self):
+        generation = 7
+
+        def reject_drive(connection, received):
+            connection.sendall(RELAY_READY)
+            received.append(receive_exact(connection, len(STOP_PACKET)))
+            received.append(receive_exact(connection, 17))
+            connection.sendall(
+                with_crc(
+                    bytes([DIAGNOSTIC_MAGIC, SEQUENCED_DRIVE_RESPONSE, 1])
+                    + struct.pack(">II", generation, 1)
+                )
+            )
+
+        with LocalRelayServer([reject_drive]) as server:
+            transport = RoombaTcpTransport(server.host, server.port)
+            transport.connect()
+            transport.armed_generation = generation
+            with self.assertRaisesRegex(RoombaDiagnosticError, "Drive rejected"):
+                transport.send_twist(
+                    0.02, 0.0, track_width_m=0.235, max_speed_mm_s=20
+                )
+            self.assertEqual(transport.drive_sequence, 0)
+            transport.close(send_stop=False)
 
     def test_reconnect_discards_host_arm_generation(self):
         transport = RoombaTcpTransport("127.0.0.1", 9000)

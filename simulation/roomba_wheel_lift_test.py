@@ -5,6 +5,7 @@ import time
 
 import rclpy
 from geometry_msgs.msg import Twist
+from std_msgs.msg import UInt32
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 
@@ -21,12 +22,15 @@ COMMAND_QOS = QoSProfile(
     reliability=ReliabilityPolicy.RELIABLE,
     durability=DurabilityPolicy.VOLATILE,
 )
+ARM_SETTLE_S = 0.2
 
 
 class RoombaWheelLiftTest(Node):
     def __init__(self):
         super().__init__("roomba_wheel_lift_test")
         self.declare_parameter("command_topic", "/roomba/cmd_vel_unstamped")
+        self.declare_parameter("arm_topic", "/roomba/arm_generation")
+        self.declare_parameter("arm_generation", 0)
         self.declare_parameter("mode", "stop")
         self.declare_parameter("left_mm_s", 20.0)
         self.declare_parameter("right_mm_s", 20.0)
@@ -37,6 +41,8 @@ class RoombaWheelLiftTest(Node):
         self.declare_parameter("subscriber_wait_timeout_s", 5.0)
 
         self.command_topic = self.get_parameter("command_topic").value
+        self.arm_topic = self.get_parameter("arm_topic").value
+        self.arm_generation = self.get_parameter("arm_generation").value
         self.profile = WheelLiftTestProfile(
             self.get_parameter("mode").value,
             left_mm_s=self.get_parameter("left_mm_s").value,
@@ -47,12 +53,22 @@ class RoombaWheelLiftTest(Node):
             confirmation=self.get_parameter("confirmation").value,
         )
         self.publisher = self.create_publisher(Twist, self.command_topic, COMMAND_QOS)
+        self.arm_publisher = self.create_publisher(UInt32, self.arm_topic, COMMAND_QOS)
+        if self.profile.mode in ("rotate", "watchdog", "floor_straight") and not (
+            isinstance(self.arm_generation, int)
+            and not isinstance(self.arm_generation, bool)
+            and 1 <= self.arm_generation <= 0xFFFFFFFF
+        ):
+            raise ValueError(
+                "rotate/watchdog requires arm_generation from 1 to 4294967295"
+            )
         now = time.monotonic()
         self.connection_gate = SubscriberConnectionGate(
             self.get_parameter("subscriber_wait_timeout_s").value,
             started_at=now,
         )
         self.started_at = None
+        self.arm_sent_at = None
         self.finished = False
         self.silence_announced = False
         self.nonzero_announced = False
@@ -75,8 +91,15 @@ class RoombaWheelLiftTest(Node):
             self.nonzero_announced = True
             self.get_logger().warn(
                 "published non-zero Twist for %s: linear.x=%.6f angular.z=%.6f; "
-                "bridge rejection is expected"
-                % (self.profile.mode, linear_x, angular_z)
+                "%s"
+                % (
+                    self.profile.mode,
+                    linear_x,
+                    angular_z,
+                    "bridge rejection is expected"
+                    if self.profile.mode == "rejection"
+                    else "bounded wheel-lift forwarding is expected",
+                )
             )
 
     def finish(self):
@@ -101,6 +124,20 @@ class RoombaWheelLiftTest(Node):
                 % (count, self.command_topic)
             )
         elapsed = now - self.started_at
+
+        if self.profile.mode in ("rotate", "watchdog", "floor_straight"):
+            if self.arm_sent_at is None:
+                arm = UInt32()
+                arm.data = self.arm_generation
+                self.arm_publisher.publish(arm)
+                self.arm_sent_at = now
+                self.get_logger().warn(
+                    "explicit ARM published: generation=%d" % self.arm_generation
+                )
+                return
+            if now - self.arm_sent_at < ARM_SETTLE_S:
+                return
+            elapsed = now - self.arm_sent_at - ARM_SETTLE_S
 
         if self.profile.mode == "stop":
             self.finish()

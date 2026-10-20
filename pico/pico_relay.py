@@ -11,12 +11,12 @@ SSID = ""
 PASSWORD = ""
 PORT = 9000
 
-BAUD = 19200
+BAUD = 115200
 COMMAND_TIMEOUT_MS = 500
 WIFI_CONNECT_TIMEOUT_MS = 30000
 WIFI_RETRY_MS = 3000
 ACCEPT_TIMEOUT_S = 1
-UART_DIAGNOSTIC_TIMEOUT_MS = 300
+UART_DIAGNOSTIC_TIMEOUT_MS = 1000
 UART_DRAIN_QUIET_MS = 10
 UART_DRAIN_TIMEOUT_MS = 100
 ALLOW_NONZERO_DRIVE = False
@@ -32,13 +32,17 @@ DIAGNOSTIC_OI_MODE = 0x02
 DIAGNOSTIC_OI_MODE_LIVE = 0x03
 CONTROL_ARM = 0x04
 GENERATION_DRIVE = 0x05
+SEQUENCED_DRIVE = 0x06
 DIAGNOSTIC_STOP_RESPONSE = 0x81
 DIAGNOSTIC_OI_MODE_RESPONSE = 0x82
 CONTROL_ARM_RESPONSE = 0x84
+SEQUENCED_DRIVE_RESPONSE = 0x86
 DIAGNOSTIC_ERROR = 0xE0
 ARM_ACCEPTED = 0x01
 ARM_REJECTED_LOCK = 0x02
 ARM_REJECTED_GENERATION = 0x03
+DRIVE_ACK_VALIDATED = 0x01
+DRIVE_ACK_UART_WRITTEN = 0x02
 STOP_ACK_VALIDATED = 0x01
 STOP_ACK_UART_WRITTEN = 0x02
 STOP_ACK_ROBOT_ZERO = 0x04
@@ -52,6 +56,7 @@ SENSOR_REQUESTED_LEFT_VELOCITY = 42
 DIAGNOSTIC_SENTINEL = 32767
 CONTROL_ARM_SIZE = 6
 GENERATION_DRIVE_SIZE = 11
+SEQUENCED_DRIVE_SIZE = 17
 WOULD_BLOCK = tuple(
     value
     for value in (
@@ -74,6 +79,7 @@ uart = machine.UART(
     tx=machine.Pin(0),
     rx=machine.Pin(1),
 )
+brc = machine.Pin(2, machine.Pin.OUT, value=1)
 led = machine.Pin("LED", machine.Pin.OUT)
 led.off()
 wlan = network.WLAN(network.STA_IF)
@@ -88,17 +94,26 @@ class MotionLatch:
         self.state = self.STOPPED
         self.generation = None
         self.highest_generation = 0
+        self.last_sequence = 0
 
     def arm(self, generation):
         if generation <= self.highest_generation:
             return False
         self.highest_generation = generation
         self.generation = generation
+        self.last_sequence = 0
         self.state = self.ARMED
         return True
 
-    def accepts(self, generation):
-        return self.state == self.ARMED and generation == self.generation
+    def accepts(self, generation, sequence):
+        return (
+            self.state == self.ARMED
+            and generation == self.generation
+            and sequence > self.last_sequence
+        )
+
+    def record(self, sequence):
+        self.last_sequence = sequence
 
     def normal_stop(self):
         if self.state == self.ARMED:
@@ -158,6 +173,10 @@ def wait_for_wifi():
 
 
 def roomba_init():
+    brc.off()
+    time.sleep_ms(200)
+    brc.on()
+    time.sleep_ms(500)
     uart.write(bytes([128]))
     time.sleep_ms(200)
     uart.write(bytes([131]))
@@ -194,6 +213,28 @@ def encoded_32(value):
 
 def unsigned_32(data):
     return (data[0] << 24) | (data[1] << 16) | (data[2] << 8) | data[3]
+
+
+def crc16_ccitt(data):
+    crc = 0xFFFF
+    for byte in data:
+        crc ^= byte << 8
+        for _ in range(8):
+            crc = (
+                ((crc << 1) ^ 0x1021) & 0xFFFF
+                if crc & 0x8000
+                else (crc << 1) & 0xFFFF
+            )
+    return crc
+
+
+def send_drive_ack(connection, status, generation, sequence):
+    payload = (
+        bytes([DIAGNOSTIC_MAGIC, SEQUENCED_DRIVE_RESPONSE, status])
+        + encoded_32(generation)
+        + encoded_32(sequence)
+    )
+    send_all(connection, payload + encoded_16(crc16_ccitt(payload)))
 
 
 def hex_bytes(data):
@@ -350,8 +391,7 @@ def forward_valid_frames(received, connection):
                     break
                 generation = unsigned_32(received[offset + 2 : offset + 6])
                 offset += CONTROL_ARM_SIZE
-                if handle_arm(connection, generation):
-                    forwarded += 1
+                handle_arm(connection, generation)
                 continue
             if diagnostic == GENERATION_DRIVE:
                 if received_size - offset < GENERATION_DRIVE_SIZE:
@@ -364,30 +404,54 @@ def forward_valid_frames(received, connection):
                 if frame[0] != DRIVE_DIRECT or right == 0 and left == 0:
                     print("drive rejected: invalid generation frame")
                     continue
-                if not ALLOW_NONZERO_DRIVE:
-                    print("rejected non-zero Drive Direct frame")
+                print("drive rejected: sequenced CRC frame required")
+                continue
+            if diagnostic == SEQUENCED_DRIVE:
+                if received_size - offset < SEQUENCED_DRIVE_SIZE:
+                    break
+                raw = bytes(received[offset : offset + SEQUENCED_DRIVE_SIZE])
+                offset += SEQUENCED_DRIVE_SIZE
+                payload = raw[:-2]
+                supplied_crc = (raw[-2] << 8) | raw[-1]
+                generation = unsigned_32(raw[2:6])
+                sequence = unsigned_32(raw[6:10])
+                frame = raw[10:15]
+                status = 0
+                if crc16_ccitt(payload) != supplied_crc or frame[0] != DRIVE_DIRECT:
+                    print("drive rejected: invalid CRC or opcode")
+                    send_drive_ack(connection, status, generation, sequence)
                     continue
-                if not motion_latch.accepts(generation):
-                    reason = (
-                        "latched_stop"
-                        if motion_latch.state == MotionLatch.LATCHED_STOP
-                        else "not_armed_or_stale_generation"
-                    )
+                status |= DRIVE_ACK_VALIDATED
+                right = signed_16(frame[1], frame[2])
+                left = signed_16(frame[3], frame[4])
+                if (
+                    right == 0 and left == 0
+                    or abs(right) > OI_MAX_WHEEL_SPEED_MM_S
+                    or abs(left) > OI_MAX_WHEEL_SPEED_MM_S
+                    or not ALLOW_NONZERO_DRIVE
+                    or not motion_latch.accepts(generation, sequence)
+                ):
                     print(
-                        "drive rejected: {} generation={} state={}".format(
-                            reason, generation, motion_latch.state
+                        "drive rejected: lock/generation/sequence generation={} sequence={}".format(
+                            generation, sequence
                         )
                     )
+                    send_drive_ack(connection, status, generation, sequence)
                     continue
-                if not uart_write_exact(frame):
-                    print("incomplete UART Drive Direct write")
-                    continue
-                print(
-                    "drive forwarded: at_ms={} generation={} right={} left={}".format(
-                        time.ticks_ms(), generation, right, left
+                if uart_write_exact(frame):
+                    status |= DRIVE_ACK_UART_WRITTEN
+                    motion_latch.record(sequence)
+                    forwarded += 1
+                    print(
+                        "drive forwarded: at_ms={} generation={} sequence={} right={} left={}".format(
+                            time.ticks_ms(), generation, sequence, right, left
+                        )
                     )
-                )
-                forwarded += 1
+                else:
+                    stop_roomba()
+                    motion_latch.latch_stop()
+                    print("incomplete UART Drive Direct write; STOP latched")
+                send_drive_ack(connection, status, generation, sequence)
                 continue
             offset += 2
             if diagnostic == DIAGNOSTIC_STOP:
@@ -486,9 +550,9 @@ def receive_client(connection, address):
                     received.extend(data)
                     received, forwarded = forward_valid_frames(received, connection)
                     if forwarded:
-                        # Invalid, incomplete, diagnostic, and legacy STOP data
-                        # cannot arm or extend motion. Only an accepted ARM or
-                        # generation-tagged non-zero drive can do so.
+                        # Invalid, incomplete, diagnostic, ARM, and legacy STOP
+                        # data cannot extend motion. Only a CRC-checked,
+                        # sequence-checked Drive written fully to UART can do so.
                         last_command = time.ticks_ms()
                         stopped = False
             except OSError as error:

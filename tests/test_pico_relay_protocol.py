@@ -344,14 +344,16 @@ class PicoRelayProtocolTests(unittest.TestCase):
         )
 
     @staticmethod
-    def drive_frame(relay, generation, right=20, left=20):
-        return (
-            bytes([relay.DIAGNOSTIC_MAGIC, relay.GENERATION_DRIVE])
+    def drive_frame(relay, generation, right=20, left=20, sequence=1):
+        payload = (
+            bytes([relay.DIAGNOSTIC_MAGIC, relay.SEQUENCED_DRIVE])
             + relay.encoded_32(generation)
+            + relay.encoded_32(sequence)
             + bytes([relay.DRIVE_DIRECT])
             + relay.encoded_16(right)
             + relay.encoded_16(left)
         )
+        return payload + relay.encoded_16(relay.crc16_ccitt(payload))
 
     def test_watchdog_latches_and_rejects_nonzero_until_new_arm(self):
         relay, uart = load_relay()
@@ -363,7 +365,7 @@ class PicoRelayProtocolTests(unittest.TestCase):
                 bytearray(self.arm_frame(relay, 10) + self.drive_frame(relay, 10)),
                 connection,
             )
-            self.assertEqual(activity, 2)
+            self.assertEqual(activity, 1)
             last_command = relay.time.ticks_ms()
             relay.time.now += relay.COMMAND_TIMEOUT_MS
             stopped = relay.enforce_command_watchdog(last_command, False)
@@ -375,7 +377,7 @@ class PicoRelayProtocolTests(unittest.TestCase):
         self.assertEqual(relay.motion_latch.state, relay.MotionLatch.LATCHED_STOP)
         self.assertEqual(uart.writes[-1], relay.STOP)
         self.assertIn("watchdog STOP:", output.getvalue())
-        self.assertIn("drive rejected: latched_stop", output.getvalue())
+        self.assertIn("drive rejected: lock/generation/sequence", output.getvalue())
 
     def test_stale_generation_rejected_and_new_arm_generation_accepted(self):
         relay, uart = load_relay()
@@ -403,6 +405,42 @@ class PicoRelayProtocolTests(unittest.TestCase):
         self.assertEqual(uart.writes, [b"\x91\x00\x14\x00\x14"])
         self.assertIn("ARM rejected: stale generation=20", output.getvalue())
         self.assertIn("ARM accepted: generation=21", output.getvalue())
+
+    def test_sequence_replay_and_bad_crc_are_rejected_without_uart_write(self):
+        relay, uart = load_relay()
+        relay.ALLOW_NONZERO_DRIVE = True
+        connection = FakeConnection()
+        relay.forward_valid_frames(bytearray(self.arm_frame(relay, 40)), connection)
+        first = self.drive_frame(relay, 40, sequence=1)
+        replay = self.drive_frame(relay, 40, sequence=1)
+        corrupt = bytearray(self.drive_frame(relay, 40, sequence=2))
+        corrupt[-1] ^= 0x01
+
+        _remaining, activity = relay.forward_valid_frames(
+            bytearray(first + replay + corrupt), connection
+        )
+
+        self.assertEqual(activity, 1)
+        self.assertEqual(uart.writes, [b"\x91\x00\x14\x00\x14"])
+        # ARM ACK (7 bytes), then one positive and two negative Drive ACKs.
+        self.assertEqual(len(connection.sent), 7 + 13 * 3)
+
+    def test_drive_uart_partial_write_returns_negative_ack_and_latches_stop(self):
+        relay, uart = load_relay()
+        relay.ALLOW_NONZERO_DRIVE = True
+        connection = FakeConnection()
+        relay.forward_valid_frames(bytearray(self.arm_frame(relay, 41)), connection)
+        drive = self.drive_frame(relay, 41, sequence=1)
+        uart.partial_write_for = b"\x91\x00\x14\x00\x14"
+
+        _remaining, activity = relay.forward_valid_frames(bytearray(drive), connection)
+
+        self.assertEqual(activity, 0)
+        self.assertEqual(relay.motion_latch.state, relay.MotionLatch.LATCHED_STOP)
+        ack = bytes(connection.sent[-13:])
+        self.assertEqual(ack[2], relay.DRIVE_ACK_VALIDATED)
+        self.assertNotEqual(ack[2] & relay.DRIVE_ACK_UART_WRITTEN, relay.DRIVE_ACK_UART_WRITTEN)
+        self.assertEqual(uart.writes[-1], relay.STOP)
 
     def test_stop_and_diagnostic_do_not_release_latched_stop(self):
         relay, uart = load_relay()

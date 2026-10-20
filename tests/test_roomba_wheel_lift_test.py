@@ -5,6 +5,7 @@ import tempfile
 import unittest
 
 from simulation.roomba_wheel_lift_test_core import (
+    ATTENDED_FLOOR_CONFIRMATION,
     MAX_DRIVE_DURATION_S,
     MAX_WHEEL_SPEED_MM_S,
     ROTATION_CONFIRMATION,
@@ -94,6 +95,21 @@ class WheelLiftTestProfileTests(unittest.TestCase):
         self.assertEqual(WATCHDOG_SILENCE_S, 0.75)
         self.assertTrue(profile.sends_nonzero)
 
+    def test_attended_floor_requires_distinct_confirmation_and_same_limits(self):
+        with self.assertRaises(PermissionError):
+            WheelLiftTestProfile(
+                "floor_straight",
+                allow_rotation=True,
+                confirmation=ROTATION_CONFIRMATION,
+            )
+        profile = WheelLiftTestProfile(
+            "floor_straight",
+            allow_rotation=True,
+            confirmation=ATTENDED_FLOOR_CONFIRMATION,
+        )
+        self.assertEqual(profile.twist(), (0.02, 0.0))
+        self.assertTrue(profile.sends_nonzero)
+
     def test_wheel_speed_and_duration_limits_are_enforced(self):
         self.assertEqual(MAX_WHEEL_SPEED_MM_S, 20)
         self.assertEqual(MAX_DRIVE_DURATION_S, 1.0)
@@ -177,6 +193,9 @@ class WheelLiftTestProfileTests(unittest.TestCase):
                 self.assertIn(mode, arguments)
                 self.assertIn("allow_rotation:=true", arguments)
                 self.assertIn("confirmation:=WHEELS_LIFTED", arguments)
+                self.assertTrue(
+                    any(value.startswith("arm_generation:=") for value in arguments)
+                )
 
     def test_watchdog_window_is_point_seven_five_seconds_and_has_no_publish(self):
         source = (ROOT / "simulation" / "roomba_wheel_lift_test.py").read_text()

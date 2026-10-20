@@ -53,7 +53,7 @@ class PicoRelaySafetyTests(unittest.TestCase):
             "received, forwarded = forward_valid_frames(received, connection)", source
         )
         self.assertIn("return bytearray(received[offset:]), forwarded", source)
-        self.assertIn("Only an accepted ARM or", source)
+        self.assertIn("Only a CRC-checked,", source)
         self.assertNotIn("del received", source)
         self.assertNotIn("if data:\n                    uart.write(data)", source)
         self.assertIn("normal STOP forwarded: at_ms=", source)
