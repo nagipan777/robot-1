@@ -21,6 +21,14 @@ class DifferentialDriveTests(unittest.TestCase):
     def test_curved_motion(self):
         self.assertEqual(twist_to_wheel_speeds(0.02, 0.1), (8, 32))
 
+    def test_left_turn_makes_right_wheel_faster(self):
+        left, right = twist_to_wheel_speeds(0.03, 0.1)
+        self.assertLess(left, right)
+
+    def test_right_turn_makes_left_wheel_faster(self):
+        left, right = twist_to_wheel_speeds(0.03, -0.1)
+        self.assertGreater(left, right)
+
     def test_custom_track_width(self):
         self.assertEqual(
             twist_to_wheel_speeds(0.0, 0.2, track_width_m=0.5),

@@ -1,5 +1,11 @@
 #!/bin/bash
 set -euo pipefail
+if [ "$(uname -m)" = arm64 ] && [ -x /opt/homebrew/bin/colima ]; then
+  colima() {
+    PATH="/opt/homebrew/bin:/opt/homebrew/sbin:$PATH" \
+      /opt/homebrew/bin/colima "$@"
+  }
+fi
 cd "$(dirname "$0")"
 compose=(docker --context colima-create3 compose -f compose.yaml)
 case "${1:-help}" in
@@ -8,17 +14,193 @@ case "${1:-help}" in
       colima start create3 --cpu 2 --memory 4 --disk 24 --vm-type vz \
         --mount none --activate=false --ssh-config=false
     fi
-    "${compose[@]}" up -d --build
+    SIM_WORLD=room "${compose[@]}" up -d --build
     echo 'Gazebo: http://localhost:6080/vnc.html?autoconnect=true&resize=scale'
+    ;;
+  camera-up)
+    if ! colima -p create3 status >/dev/null 2>&1; then
+      colima start create3 --cpu 2 --memory 4 --disk 24 --vm-type vz \
+        --mount none --activate=false --ssh-config=false
+    fi
+    SIM_WORLD=room_camera VISION_CONTROLLER_CONFIG=/etc/vision-controller.sim-camera.yaml \
+      "${compose[@]}" up -d --build --force-recreate
+    echo 'Camera world: http://localhost:6080/vnc.html?autoconnect=true&resize=scale'
+    echo 'The fixed camera viewer opens automatically inside VNC.'
+    echo 'MJPEG: http://127.0.0.1:8766/stream.mjpg'
+    ;;
+  vision-integration-up)
+    if colima -p create3 status >/dev/null 2>&1; then
+      "${compose[@]}" down
+      colima -p create3 stop
+    fi
+    colima start create3 --cpu 4 --memory 6 --disk 24 --vm-type vz \
+      --mount none --activate=false --ssh-config=false
+    SIM_WORLD=room_camera \
+      VISION_CONTROLLER_CONFIG=/etc/vision-controller.integration.yaml \
+      ROBOT_X=0.0 ROBOT_Y=0.0 ROBOT_YAW=0.0 SPAWN_DOCK=false \
+      "${compose[@]}" up -d --build --force-recreate
+    for attempt in {1..15}; do
+      if "${compose[@]}" exec -T simulator bash -lc \
+        'source /opt/ros/jazzy/setup.bash; gz service -s /world/room_camera/control --reqtype gz.msgs.WorldControl --reptype gz.msgs.Boolean --timeout 2000 --req "pause: false"' \
+        >/dev/null 2>&1; then
+        break
+      fi
+      sleep 2
+    done
+    echo 'Vision integration world started with control and calibration disabled.'
+    echo 'No real-Roomba bridge is started by this command.'
+    ;;
+  nav-test-up)
+    if colima -p create3 status >/dev/null 2>&1; then
+      "${compose[@]}" down
+      colima -p create3 stop
+    fi
+    colima start create3 --cpu 4 --memory 6 --disk 24 --vm-type vz \
+      --mount none --activate=false --ssh-config=false
+    SIM_WORLD=room VISION_CONTROLLER_CONFIG=/etc/vision-controller.sim-camera.yaml \
+      ROBOT_X=0.0 ROBOT_Y=-0.75 ROBOT_YAW=0.0 SPAWN_DOCK=false \
+      "${compose[@]}" up -d --build --force-recreate
+    for attempt in {1..15}; do
+      if "${compose[@]}" exec -T simulator bash -lc \
+        'gz service -s /world/room/control --reqtype gz.msgs.WorldControl --reptype gz.msgs.Boolean --timeout 2000 --req "pause: false"' \
+        >/dev/null 2>&1; then
+        break
+      fi
+      sleep 2
+    done
+    echo 'Known-target test world started with control disabled.'
     ;;
   down) "${compose[@]}" down ;;
   stop) "${compose[@]}" down; colima -p create3 stop ;;
   shell) "${compose[@]}" exec simulator bash ;;
   status) "${compose[@]}" ps ;;
+  cmd-adapter)
+    mode="${2:-dry_run}"
+    input_topic="${3:-/cmd_vel_unstamped}"
+    case "$mode" in
+      dry_run|roomba) ;;
+      gazebo)
+        if [ "$input_topic" = /cmd_vel_unstamped ]; then
+          echo "gazebo mode requires a distinct input such as /nav/cmd_vel_unstamped" >&2
+          exit 2
+        fi
+        ;;
+      *) echo "Usage: $0 cmd-adapter [dry_run|gazebo|roomba] [INPUT_TOPIC]" >&2; exit 2 ;;
+    esac
+    "${compose[@]}" exec simulator bash -lc \
+      'source /opt/create3_ws/install/setup.bash; exec /usr/local/bin/cmd-vel-output-adapter --ros-args --params-file /etc/cmd-vel-output-adapter.yaml -p mode:="$1" -p input_topic:="$2"' \
+      _ "$mode" "$input_topic"
+    ;;
+  camera-status)
+    "${compose[@]}" exec -T simulator bash -lc '
+      set -e
+      source /opt/ros/jazzy/setup.bash
+      source /opt/create3_ws/install/setup.bash
+      if [ "${SIM_WORLD:-room}" != "room_camera" ]; then
+        echo "The camera world is not active. Run ./simulation/sim.sh camera-up" >&2
+        exit 1
+      fi
+      echo "world=$SIM_WORLD"
+      ros2 topic info /sim/fixed_camera/image_raw
+      python3 -c '"'"'import urllib.request; print(urllib.request.urlopen("http://127.0.0.1:8766/health", timeout=2).read().decode())'"'"'
+    '
+    ;;
+  litter-add|litter-move|litter-pose)
+    if [ "$#" -eq 3 ]; then
+      kind=can
+      x="$2"
+      y="$3"
+      yaw=0.0
+    elif [ "$#" -eq 4 ] || [ "$#" -eq 5 ]; then
+      kind="$2"
+      x="$3"
+      y="$4"
+      yaw="${5:-0.0}"
+    else
+      echo "Usage: $0 ${1} [can|paper|bottle] X_M Y_M [YAW_RAD]" >&2
+      exit 2
+    fi
+    "${compose[@]}" exec -T simulator /usr/local/bin/litter-model "${1#litter-}" "$kind" "$x" "$y" "$yaw"
+    ;;
+  litter-remove)
+    "${compose[@]}" exec -T simulator /usr/local/bin/litter-model remove can
+    ;;
+  calibration-marker-move)
+    if [ "$#" -ne 3 ]; then
+      echo "Usage: $0 calibration-marker-move X_M Y_M" >&2
+      exit 2
+    fi
+    "${compose[@]}" exec -T simulator /usr/local/bin/calibration-marker move "$2" "$3"
+    ;;
+  calibration-marker-remove)
+    "${compose[@]}" exec -T simulator /usr/local/bin/calibration-marker remove
+    ;;
   logs) "${compose[@]}" logs --tail 100 -f ;;
   teleop)
     "${compose[@]}" exec simulator bash -c \
       'source /opt/create3_ws/install/setup.bash; ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -p stamped:=true -p use_sim_time:=true'
+    ;;
+  roomba-tcp)
+    if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
+      echo "Usage: $0 roomba-tcp PICO_IP [PORT]" >&2
+      exit 2
+    fi
+    host="$2"
+    port="${3:-9000}"
+    "${compose[@]}" exec simulator bash -lc \
+      'source /opt/create3_ws/install/setup.bash; exec /usr/local/bin/roomba-bridge-tcp --ros-args -p host:="$1" -p port:="$2" -p drive_enabled:=false -p watchdog_test_mode:=false -p command_topic:=/roomba/cmd_vel_unstamped' \
+      -- "$host" "$port"
+    ;;
+  roomba-tcp-diagnostic)
+    if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
+      echo "Usage: $0 roomba-tcp-diagnostic PICO_IP [PORT]" >&2
+      exit 2
+    fi
+    host="$2"
+    port="${3:-9000}"
+    "${compose[@]}" exec simulator bash -lc \
+      'source /opt/create3_ws/install/setup.bash; exec /usr/local/bin/roomba-bridge-tcp --ros-args -p host:="$1" -p port:="$2" -p drive_enabled:=false -p diagnostic_on_connect:=true -p watchdog_test_mode:=false -p command_topic:=/roomba/cmd_vel_unstamped' \
+      -- "$host" "$port"
+    ;;
+  roomba-tcp-watchdog)
+    if [ "$#" -lt 3 ] || [ "$#" -gt 4 ] || [ "$3" != "WHEELS_LIFTED" ]; then
+      echo "Usage: $0 roomba-tcp-watchdog PICO_IP WHEELS_LIFTED [PORT]" >&2
+      exit 2
+    fi
+    host="$2"
+    port="${4:-9000}"
+    "${compose[@]}" exec simulator bash -lc \
+      'source /opt/create3_ws/install/setup.bash; exec /usr/local/bin/roomba-bridge-tcp --ros-args -p host:="$1" -p port:="$2" -p drive_enabled:=true -p diagnostic_on_connect:=true -p watchdog_test_mode:=true -p watchdog_test_silence:=0.75 -p watchdog_test_confirmation:=WHEELS_LIFTED -p max_speed_mm_s:=20 -p command_topic:=/roomba/cmd_vel_unstamped' \
+      -- "$host" "$port"
+    ;;
+  roomba-wheel-lift-test)
+    mode="${2:-stop}"
+    case "$mode" in
+      stop|rejection)
+        rotation_authorized=false
+        ;;
+      rotate|watchdog)
+        if [ "${3:-}" != "WHEELS_LIFTED" ]; then
+          echo "Refusing $mode: place Roomba on a stable stand and pass WHEELS_LIFTED" >&2
+          exit 2
+        fi
+        rotation_authorized=true
+        ;;
+      *)
+        echo "Usage: $0 roomba-wheel-lift-test {stop|rejection|rotate|watchdog} [WHEELS_LIFTED]" >&2
+        exit 2
+        ;;
+    esac
+    if [ "$rotation_authorized" = true ]; then
+      arm_generation="$(date +%s)"
+      "${compose[@]}" exec simulator bash -lc \
+        'source /opt/create3_ws/install/setup.bash; exec /usr/local/bin/roomba-wheel-lift-test --ros-args -p mode:="$1" "${@:2}"' \
+        -- "$mode" -p allow_rotation:=true -p confirmation:=WHEELS_LIFTED -p arm_generation:="$arm_generation"
+    else
+      "${compose[@]}" exec simulator bash -lc \
+        'source /opt/create3_ws/install/setup.bash; exec /usr/local/bin/roomba-wheel-lift-test --ros-args -p mode:="$1"' \
+        -- "$mode"
+    fi
     ;;
   test-marker)
     "${compose[@]}" exec simulator bash -lc \
@@ -28,5 +210,211 @@ case "${1:-help}" in
     "${compose[@]}" exec simulator bash -lc \
       'source /opt/create3_ws/install/setup.bash; exec /usr/local/bin/recording-status'
     ;;
-  *) echo "Usage: $0 {up|down|stop|shell|status|logs|teleop|test-marker|record-status}" ;;
+  presentation-layout)
+    "${compose[@]}" exec -T simulator bash -lc '
+      set -e
+      export DISPLAY=:99
+      for attempt in 1 2 3 4 5; do
+        gazebo_id=$(wmctrl -l | awk "/Gazebo Sim/ {print \$1; exit}")
+        rviz_id=$(wmctrl -l | awk "/RViz/ {print \$1; exit}")
+        if [ -n "$gazebo_id" ] && [ -n "$rviz_id" ]; then
+          wmctrl -i -r "$gazebo_id" -b remove,maximized_vert,maximized_horz
+          wmctrl -i -r "$rviz_id" -b remove,maximized_vert,maximized_horz
+          wmctrl -i -r "$gazebo_id" -e 0,0,0,760,760
+          wmctrl -i -r "$rviz_id" -e 0,760,0,520,760
+          wmctrl -i -a "$gazebo_id"
+          exit 0
+        fi
+        sleep 2
+      done
+      echo "Gazebo or RViz window was not found" >&2
+      exit 1
+    '
+    echo 'Gazebo and RViz arranged for a 1280x800 recording.'
+    ;;
+  ros-status)
+    "${compose[@]}" exec simulator bash -lc '
+      set -e
+      source /opt/create3_ws/install/setup.bash
+      retry_ros() {
+        for attempt in 1 2 3; do
+          "$@" && return 0
+          [ "$attempt" -eq 3 ] || sleep 1
+        done
+        return 1
+      }
+      echo "=== ROS 2 nodes ==="
+      ros2 node list
+      echo "=== Required topics ==="
+      ros2 topic info /webcam/detections
+      ros2 topic info /litter/target
+      ros2 topic info /robot/pose
+      ros2 topic info /cmd_vel_unstamped
+      echo "=== Controller parameters ==="
+      retry_ros ros2 param get /vision_turn_controller calibration_ready
+      retry_ros ros2 param get /vision_turn_controller control_mode
+      retry_ros ros2 param get /vision_turn_controller control_enabled
+    '
+    ;;
+  control-turn)
+    "${compose[@]}" exec simulator bash -lc '
+      set -e
+      source /opt/create3_ws/install/setup.bash
+      retry_ros() {
+        for attempt in 1 2 3; do
+          "$@" && return 0
+          [ "$attempt" -eq 3 ] || sleep 1
+        done
+        return 1
+      }
+      retry_ros ros2 param set /vision_turn_controller control_enabled false
+      retry_ros ros2 param set /vision_turn_controller calibration_ready true
+      retry_ros ros2 param set /vision_turn_controller control_mode turn_only
+      retry_ros ros2 param set /vision_turn_controller control_enabled true
+    '
+    echo 'Simulation control enabled in turn_only mode.'
+    ;;
+  control-approach)
+    "${compose[@]}" exec simulator bash -lc '
+      set -e
+      source /opt/create3_ws/install/setup.bash
+      retry_ros() {
+        for attempt in 1 2 3; do
+          "$@" && return 0
+          [ "$attempt" -eq 3 ] || sleep 1
+        done
+        return 1
+      }
+      retry_ros ros2 param set /vision_turn_controller control_mode approach
+    '
+    echo 'Simulation control changed to approach mode.'
+    ;;
+  control-off)
+    "${compose[@]}" exec simulator bash -lc '
+      set -e
+      source /opt/create3_ws/install/setup.bash
+      retry_ros() {
+        for attempt in 1 2 3; do
+          "$@" && return 0
+          [ "$attempt" -eq 3 ] || sleep 1
+        done
+        return 1
+      }
+      retry_ros ros2 param set /vision_turn_controller control_enabled false
+      ros2 topic pub --once /cmd_vel_unstamped geometry_msgs/msg/Twist "{}"
+    '
+    echo 'Simulation control disabled and a zero velocity command was published.'
+    ;;
+  known-target-test|known-target-abort-test)
+    if ! "${compose[@]}" exec -T simulator bash -lc '[ "$VISION_CONTROLLER_CONFIG" = /etc/vision-controller.sim-camera.yaml ]'; then
+      echo 'Known-target tests require: ./simulation/sim.sh nav-test-up' >&2
+      exit 1
+    fi
+    "${compose[@]}" exec -T simulator bash -lc '
+      set -e
+      source /opt/create3_ws/install/setup.bash
+      odom_ready=false
+      for attempt in {1..90}; do
+        if ros2 topic type /odom 2>/dev/null | grep -q "nav_msgs/msg/Odometry"; then
+          odom_ready=true
+          break
+        fi
+        sleep 2
+      done
+      if [ "$odom_ready" != true ]; then
+        echo "/odom did not become available; control remains disabled" >&2
+        exit 1
+      fi
+      timeout 30s ros2 topic echo /odom --once >/dev/null
+    '
+    mkdir -p ../artifacts/known_target_test
+    result_name=result.json
+    if [ "$1" = known-target-abort-test ]; then
+      result_name=abnormal_exit.json
+    fi
+    set +e
+    if [ "$1" = known-target-abort-test ]; then
+      "${compose[@]}" exec -T simulator bash -lc 'source /opt/create3_ws/install/setup.bash; exec /usr/local/bin/known-target-navigation-test --simulate-abort'
+    else
+      "${compose[@]}" exec -T simulator bash -lc 'source /opt/create3_ws/install/setup.bash; exec /usr/local/bin/known-target-navigation-test'
+    fi
+    test_status=$?
+    set -e
+    "${compose[@]}" cp simulator:/tmp/known_target_test_result.json "../artifacts/known_target_test/${result_name}"
+    exit "$test_status"
+    ;;
+  multi-target-test)
+    if ! "${compose[@]}" exec -T simulator bash -lc '[ "$VISION_CONTROLLER_CONFIG" = /etc/vision-controller.sim-camera.yaml ]'; then
+      echo 'Multi-target test requires: ./simulation/sim.sh nav-test-up' >&2
+      exit 1
+    fi
+    "${compose[@]}" exec -T simulator bash -lc '
+      set -e
+      source /opt/create3_ws/install/setup.bash
+      supervisorctl stop webcam-bridge >/dev/null 2>&1 || true
+      odom_ready=false
+      for attempt in {1..90}; do
+        if ros2 topic type /odom 2>/dev/null | grep -q "nav_msgs/msg/Odometry"; then
+          odom_ready=true
+          break
+        fi
+        sleep 2
+      done
+      if [ "$odom_ready" != true ]; then
+        echo "/odom did not become available; control remains disabled" >&2
+        exit 1
+      fi
+      timeout 30s ros2 topic echo /odom --once >/dev/null
+      exec /usr/local/bin/multi-target-navigation-test
+    '
+    test_status=$?
+    mkdir -p ../artifacts/multi_target_test
+    "${compose[@]}" cp simulator:/tmp/multi_target_test_result.json ../artifacts/multi_target_test/result.json
+    "${compose[@]}" cp simulator:/tmp/multi_target_test_report.md ../artifacts/multi_target_test/REPORT.md
+    exit "$test_status"
+    ;;
+  synthetic-coordinate-test)
+    if ! "${compose[@]}" exec -T simulator bash -lc \
+      '[ "$SIM_WORLD" = room_camera ] && [ "$VISION_CONTROLLER_CONFIG" = /etc/vision-controller.integration.yaml ] && [ "$ROBOT_X" = 0.0 ] && [ "$ROBOT_Y" = 0.0 ] && [ "$ROBOT_YAW" = 0.0 ] && [ "$SPAWN_DOCK" = false ]'; then
+      echo 'Coordinate test requires: ./simulation/sim.sh vision-integration-up' >&2
+      exit 1
+    fi
+    set +e
+    "${compose[@]}" exec -T simulator bash -lc \
+      'source /opt/create3_ws/install/setup.bash; exec /usr/local/bin/synthetic-detection-coordinate-test'
+    test_status=$?
+    set -e
+    mkdir -p ../artifacts/synthetic_detection_test
+    "${compose[@]}" cp simulator:/tmp/synthetic_detection_test_result.json \
+      ../artifacts/synthetic_detection_test/result.json
+    exit "$test_status"
+    ;;
+  yolo-navigation-test)
+    if ! "${compose[@]}" exec -T simulator bash -lc \
+      '[ "$SIM_WORLD" = room_camera ] && [ "$VISION_CONTROLLER_CONFIG" = /etc/vision-controller.integration.yaml ] && [ "$SPAWN_DOCK" = false ]'; then
+      echo 'YOLO navigation test requires: ./simulation/sim.sh vision-integration-up' >&2
+      exit 1
+    fi
+    set +e
+    "${compose[@]}" exec -T simulator bash -lc \
+      'source /opt/create3_ws/install/setup.bash; exec /usr/local/bin/yolo-navigation-test'
+    test_status=$?
+    set -e
+    mkdir -p ../artifacts/yolo_navigation_test
+    "${compose[@]}" cp simulator:/tmp/yolo_navigation_test_result.json \
+      ../artifacts/yolo_navigation_test/result.json
+    exit "$test_status"
+    ;;
+  oscillation-diagnostics)
+    mkdir -p ../artifacts/oscillation_diagnostics
+    "${compose[@]}" exec -T simulator bash -lc '
+      source /opt/create3_ws/install/setup.bash
+      exec /usr/local/bin/oscillation-diagnostics --duration "${1:-180}"
+    ' -- "${2:-180}"
+    "${compose[@]}" cp simulator:/tmp/oscillation_events.jsonl ../artifacts/oscillation_diagnostics/events.jsonl
+    "${compose[@]}" cp simulator:/tmp/oscillation_summary.json ../artifacts/oscillation_diagnostics/summary.json
+    ;;
+  *)
+    echo "Usage: $0 {up|camera-up|vision-integration-up|nav-test-up|down|stop|shell|status|cmd-adapter [dry_run|gazebo|roomba] [INPUT_TOPIC]|camera-status|litter-add X Y|litter-move X Y|litter-remove|logs|teleop|roomba-tcp PICO_IP [PORT]|roomba-tcp-diagnostic PICO_IP [PORT]|roomba-tcp-watchdog PICO_IP WHEELS_LIFTED [PORT]|roomba-wheel-lift-test MODE [WHEELS_LIFTED]|test-marker|record-status|presentation-layout|ros-status|control-turn|control-approach|control-off|known-target-test|known-target-abort-test|multi-target-test|synthetic-coordinate-test|yolo-navigation-test|oscillation-diagnostics [SECONDS]}"
+    ;;
 esac

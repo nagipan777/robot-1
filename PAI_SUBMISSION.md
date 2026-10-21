@@ -4,7 +4,7 @@
 
 ## 1. 変更前ベースライン（2026-10-12）
 
-- `.venv/bin/python -m unittest discover -v`: **37件成功**
+- `.venv/bin/python -m unittest discover -v`: **38件成功**
 - `simulation/sim.sh`と`simulation/start-simulation.sh`: `bash -n`成功
 - Create 3起動経路: `sim.sh` → Docker Compose → Supervisor → `create3_gz.launch.py`
 - MacからDockerへの検出転送: `127.0.0.1:8765`へのHTTP POST
@@ -24,7 +24,7 @@
 
 ## 3. 推奨画面配置
 
-- 左半分: VNCブラウザ。GazeboとRVizを並べるか、`Alt+Tab`で切り替える。
+- 左半分: VNCブラウザ。`presentation-layout`でGazeboとRVizを自動配置する。
 - 右上: MacのYOLO映像。
 - 右下: `record-status`のROS 2トピック集約表示。
 - 必要に応じて短時間だけ別ターミナルで`ros2 node list`と`ros2 topic info`を表示する。
@@ -39,6 +39,7 @@
 cd /path/to/robot-1
 ./simulation/sim.sh up
 ./simulation/sim.sh status
+./simulation/sim.sh presentation-layout
 ```
 
 ブラウザで次を開く。
@@ -46,6 +47,8 @@ cd /path/to/robot-1
 ```text
 http://localhost:6080/vnc.html?autoconnect=true&resize=scale
 ```
+
+Gazeboには撮影用の室内、走行レーン、照明、スケール確認用の家具が表示される。RVizにはシアンの走行軌跡・進行方向、オレンジの目標線、到達時に緑になる目標、速度付き状態表示が重なる。これらは表示専用で制御アルゴリズムを変更しない。
 
 ターミナルBで、読み取り専用のROS 2集約表示を起動する。
 
@@ -65,12 +68,7 @@ python vision.py --quiet
 コンテナシェルでノードと型を表示する。
 
 ```bash
-./simulation/sim.sh shell
-ros2 node list
-ros2 topic info /webcam/detections
-ros2 topic info /litter/target
-ros2 topic info /cmd_vel_unstamped
-ros2 topic info /robot/pose
+./simulation/sim.sh ros-status
 ```
 
 期待する型:
@@ -101,9 +99,7 @@ ros2 topic echo /cmd_vel_unstamped
 最初に校正済みであることを目視確認し、旋回だけを有効化する。
 
 ```bash
-ros2 param set /vision_turn_controller calibration_ready true
-ros2 param set /vision_turn_controller control_mode turn_only
-ros2 param set /vision_turn_controller control_enabled true
+./simulation/sim.sh control-turn
 ```
 
 動画では、ゴミを左右へ動かし、次を同時に示す。
@@ -118,7 +114,7 @@ ros2 param set /vision_turn_controller control_enabled true
 旋回を確認した後だけ、低速接近へ切り替える。
 
 ```bash
-ros2 param set /vision_turn_controller control_mode approach
+./simulation/sim.sh control-approach
 ```
 
 目標へ接近し、`reached=true`とゼロ速度を撮影する。
@@ -128,8 +124,7 @@ ros2 param set /vision_turn_controller control_mode approach
 通常停止は、先に制御を無効化してゼロ速度を確認する。
 
 ```bash
-ros2 param set /vision_turn_controller control_enabled false
-ros2 topic pub --once /cmd_vel_unstamped geometry_msgs/msg/Twist '{}'
+./simulation/sim.sh control-off
 ```
 
 その後、YOLOと`record-status`を`Ctrl+C`で終了し、シミュレーションを停止する。
@@ -146,6 +141,7 @@ ros2 topic pub --once /cmd_vel_unstamped geometry_msgs/msg/Twist '{}'
 - [ ] `/litter/target`の型と座標変化を示した
 - [ ] `/cmd_vel_unstamped`の型と速度変化を示した
 - [ ] RVizに目標Markerが表示された
+- [ ] RVizに軌跡、進行方向、目標線、速度状態が表示された
 - [ ] Gazeboで旋回、前進、停止を示した
 - [ ] 検出消失または制御無効化による停止を示した
 - [ ] Roomba 680実機には接続していない

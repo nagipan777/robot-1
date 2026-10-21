@@ -17,6 +17,9 @@ ARGUMENTS = [
                           choices=['true', 'false'], description='Start rviz.'),
     DeclareLaunchArgument('world', default_value='depot',
                           description='Ignition World'),
+    DeclareLaunchArgument('spawn_dock', default_value='true',
+                          choices=['true', 'false'],
+                          description='Spawn the standard dock model.'),
 ]
 
 for pose_element in ['x', 'y', 'z', 'yaw']:
@@ -50,6 +53,7 @@ def generate_launch_description():
         launch_arguments=[
             ('namespace', LaunchConfiguration('namespace')),
             ('use_rviz', LaunchConfiguration('use_rviz')),
+            ('spawn_dock', LaunchConfiguration('spawn_dock')),
             ('x', LaunchConfiguration('x')),
             ('y', LaunchConfiguration('y')),
             ('z', LaunchConfiguration('z')),

@@ -171,6 +171,7 @@ flowchart LR
 | `simulation/vision_turn_controller.py` | Docker | 検出選択、座標変換、目標配信、姿勢入力、追従制御、安全停止 |
 | `simulation/unstamped_cmd_relay.py` | Docker | `Twist`から`TwistStamped`への変換 |
 | `simulation/roomba_dry_run_adapter.py` | Docker、手動起動 | 左右輪変換、比率維持制限、指令途絶停止、ログ出力 |
+| `simulation/cmd_vel_output_adapter.py` | Docker、手動起動 | Nav速度出力をGazebo、実機ブリッジ直前、またはdry-run専用トピックへ排他的にルーティング |
 | `simulation/start-simulation.sh` | Docker | Create 3、Gazebo、RVizの起動 |
 | `simulation/supervisord.conf` | Docker | 各プロセスの起動順と監視 |
 | `simulation/vision_controller.yaml` | Dockerへコピー | トピック、校正値、制御値、安全フラグ |
@@ -195,8 +196,9 @@ flowchart LR
     subgraph hardware["未実装：実機"]
         aruco["固定カメラのArUco検出"] -.-> pose["/robot/pose<br/>PoseStamped, frame: map"]
         pose -.-> controller
-        controller -.-> adapter["実機通信アダプター"]
-        adapter -.-> roomba["Roomba 680"]
+        controller --> adapter["cmd_vel_output_adapter"]
+        adapter --> bridge["roomba_bridge_tcp<br/>drive_enabled=falseが既定"]
+        bridge -.-> roomba["Roomba 680"]
     end
 ```
 

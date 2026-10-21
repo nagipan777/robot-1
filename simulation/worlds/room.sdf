@@ -1,29 +1,30 @@
 <?xml version="1.0"?>
 <sdf version="1.9">
   <world name="room">
-    <physics name="physics" type="ignored">
-      <max_step_size>0.003</max_step_size>
-      <real_time_factor>1.0</real_time_factor>
-    </physics>
+    <scene><ambient>0.55 0.58 0.65 1</ambient><background>0.12 0.16 0.22 1</background><shadows>true</shadows><grid>false</grid></scene>
+    <physics name="physics" type="ignored"><max_step_size>0.003</max_step_size><real_time_factor>1.0</real_time_factor></physics>
     <plugin filename="gz-sim-physics-system" name="gz::sim::systems::Physics"/>
     <plugin filename="gz-sim-user-commands-system" name="gz::sim::systems::UserCommands"/>
     <plugin filename="gz-sim-scene-broadcaster-system" name="gz::sim::systems::SceneBroadcaster"/>
     <plugin filename="gz-sim-contact-system" name="gz::sim::systems::Contact"/>
-    <light type="directional" name="sun">
-      <pose>0 0 10 0 0 0</pose>
-      <diffuse>0.8 0.8 0.8 1</diffuse>
-      <specular>0.2 0.2 0.2 1</specular>
-      <direction>-0.5 0.1 -0.9</direction>
-      <cast_shadows>false</cast_shadows>
-    </light>
-    <model name="ground_plane">
-      <static>true</static>
-      <link name="link">
-        <collision name="collision"><geometry><plane><normal>0 0 1</normal><size>20 20</size></plane></geometry></collision>
-        <visual name="visual"><geometry><plane><normal>0 0 1</normal><size>20 20</size></plane></geometry>
-          <material><ambient>0.7 0.7 0.7 1</ambient><diffuse>0.7 0.7 0.7 1</diffuse></material>
-        </visual>
-      </link>
-    </model>
+    <light type="directional" name="sun"><pose>-2 -1 8 0 0 0</pose><diffuse>0.95 0.92 0.82 1</diffuse><specular>0.25 0.25 0.25 1</specular><direction>-0.35 0.25 -0.9</direction><cast_shadows>true</cast_shadows></light>
+    <light type="point" name="fill_light"><pose>1.5 -1.0 2.6 0 0 0</pose><diffuse>0.45 0.58 0.8 1</diffuse><specular>0.15 0.15 0.2 1</specular><attenuation><range>8</range><constant>0.7</constant><linear>0.08</linear><quadratic>0.02</quadratic></attenuation></light>
+
+    <model name="studio_floor"><static>true</static><link name="link">
+      <collision name="collision"><geometry><box><size>6 4 0.08</size></box></geometry></collision>
+      <visual name="visual"><geometry><box><size>6 4 0.08</size></box></geometry><material><ambient>0.17 0.20 0.24 1</ambient><diffuse>0.28 0.32 0.38 1</diffuse><specular>0.08 0.08 0.08 1</specular></material></visual>
+    </link><pose>0 0 -0.04 0 0 0</pose></model>
+    <model name="demo_lane"><static>true</static><link name="link"><visual name="visual"><geometry><box><size>4.6 1.55 0.008</size></box></geometry><material><ambient>0.08 0.16 0.22 1</ambient><diffuse>0.10 0.27 0.38 1</diffuse><emissive>0.01 0.03 0.05 1</emissive></material></visual></link><pose>0 0 0.006 0 0 0</pose></model>
+    <model name="center_guide"><static>true</static><link name="link"><visual name="visual"><geometry><box><size>4.2 0.018 0.012</size></box></geometry><material><ambient>0.0 0.7 0.9 1</ambient><diffuse>0.0 0.7 0.9 1</diffuse><emissive>0.0 0.25 0.35 1</emissive></material></visual></link><pose>0 0 0.016 0 0 0</pose></model>
+    <model name="start_pad"><static>true</static><link name="link"><visual name="visual"><geometry><cylinder><radius>0.42</radius><length>0.006</length></cylinder></geometry><material><ambient>0.03 0.45 0.55 1</ambient><diffuse>0.03 0.45 0.55 1</diffuse></material></visual></link><pose>0 0 0.012 0 0 0</pose></model>
+
+    <!-- The open front keeps the recording camera unobstructed. -->
+    <model name="back_wall"><static>true</static><link name="link"><collision name="collision"><geometry><box><size>6 0.10 1.25</size></box></geometry></collision><visual name="visual"><geometry><box><size>6 0.10 1.25</size></box></geometry><material><ambient>0.32 0.36 0.44 1</ambient><diffuse>0.46 0.51 0.60 1</diffuse></material></visual></link><pose>0 1.95 0.625 0 0 0</pose></model>
+    <model name="left_wall"><static>true</static><link name="link"><collision name="collision"><geometry><box><size>0.10 4 1.25</size></box></geometry></collision><visual name="visual"><geometry><box><size>0.10 4 1.25</size></box></geometry><material><ambient>0.26 0.30 0.37 1</ambient><diffuse>0.39 0.44 0.52 1</diffuse></material></visual></link><pose>-2.95 0 0.625 0 0 0</pose></model>
+    <model name="right_wall"><static>true</static><link name="link"><collision name="collision"><geometry><box><size>0.10 4 1.25</size></box></geometry></collision><visual name="visual"><geometry><box><size>0.10 4 1.25</size></box></geometry><material><ambient>0.26 0.30 0.37 1</ambient><diffuse>0.39 0.44 0.52 1</diffuse></material></visual></link><pose>2.95 0 0.625 0 0 0</pose></model>
+
+    <model name="plant_pot"><static>true</static><link name="link"><collision name="collision"><geometry><cylinder><radius>0.24</radius><length>0.38</length></cylinder></geometry></collision><visual name="pot"><geometry><cylinder><radius>0.24</radius><length>0.38</length></cylinder></geometry><material><ambient>0.55 0.20 0.08 1</ambient><diffuse>0.72 0.28 0.10 1</diffuse></material></visual><visual name="plant"><pose>0 0 0.42 0 0 0</pose><geometry><sphere><radius>0.34</radius></sphere></geometry><material><ambient>0.05 0.34 0.16 1</ambient><diffuse>0.08 0.55 0.25 1</diffuse></material></visual></link><pose>-2.45 1.35 0.19 0 0 0</pose></model>
+    <model name="side_table"><static>true</static><link name="link"><collision name="collision"><geometry><box><size>0.9 0.55 0.48</size></box></geometry></collision><visual name="visual"><geometry><box><size>0.9 0.55 0.48</size></box></geometry><material><ambient>0.32 0.18 0.10 1</ambient><diffuse>0.48 0.29 0.16 1</diffuse></material></visual></link><pose>2.25 1.45 0.24 0 0 0</pose></model>
+    <model name="accent_cube"><static>true</static><link name="link"><visual name="visual"><geometry><box><size>0.28 0.28 0.28</size></box></geometry><material><ambient>0.95 0.38 0.05 1</ambient><diffuse>1.0 0.45 0.06 1</diffuse><emissive>0.16 0.04 0.0 1</emissive></material></visual></link><pose>2.25 1.45 0.62 0 0 0.35</pose></model>
   </world>
 </sdf>
