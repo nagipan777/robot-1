@@ -13,6 +13,8 @@ taco_dataset/
 dirt_dataset/
 runs/
 taco_colab.zip
+/datasets/
+/artifacts/
 
 # Model weights and detector exports
 *.pt

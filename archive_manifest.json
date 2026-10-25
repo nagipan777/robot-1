@@ -1,0 +1,151 @@
+{
+  "schema_version": 1,
+  "created_at": "2026-10-20T19:13:09+09:00",
+  "source_root": "/Users/imaichika/robot",
+  "destination": "/Volumes/名称未設定/robot-backup-20261020",
+  "backup_status": "COMPLETE",
+  "integrity_status": "VERIFIED_SHA256",
+  "backup_file_count_before_final_document_refresh": 1596,
+  "backup_logical_size_bytes_before_final_document_refresh": 189448010,
+  "initial_sha256sums_sha256": "9ec92987a2057499bd1c6697c7ee5d5de4b1bb7feb35c155f328bcd8d0988e5b",
+  "git_bundle_verified": true,
+  "credentials_scan_verified": true,
+  "cleanup": {
+    "approved_at": "2026-10-20",
+    "recovered_allocated_kib": 7200232,
+    "recovered_approx_gib": 6.87,
+    "post_cleanup_tests": "248 passed, 0 failed",
+    "post_cleanup_git_fsck": "PASS",
+    "venv_retained": true,
+    "docker_colima_untouched": true
+  },
+  "digest_method": "sha256 over each sorted relative path, NUL, and the raw 32-byte sha256 of file content",
+  "safety_flags": {
+    "ALLOW_NONZERO_DRIVE": false,
+    "drive_enabled": false,
+    "control_enabled": false,
+    "calibration_ready": false
+  },
+  "sets": [
+    {
+      "id": "source_snapshot",
+      "classification": "ACTIVE",
+      "source": "/Users/imaichika/robot excluding .git, .venv, caches, runs, artifacts, dirt_dataset and audit outputs",
+      "file_count": 358,
+      "size_bytes": 15131588,
+      "source_sha256": "0933d3f394b37b278039c42c9d89b10d5773b7890f5a00d38575d127429a065c",
+      "copied": true,
+      "note": "pico/cmd_vel_dry_run_receiver.py was copied with SSID and PASSWORD blanked; see SECURITY_EXCLUSIONS.txt"
+    },
+    {
+      "id": "tests",
+      "classification": "CRITICAL_TEST",
+      "source": "/Users/imaichika/robot/tests plus root test_*.py",
+      "file_count": 48,
+      "size_bytes": 159992,
+      "source_sha256": "5ce98e470c0596e2c914e3efcae91986099ca7b5197f449cb306894a8dbc0e4d",
+      "copied": true
+    },
+    {
+      "id": "models",
+      "classification": "ACTIVE_AND_ARCHIVE_CANDIDATE",
+      "source": "all project .pt/.pth/.onnx/.engine files",
+      "file_count": 6,
+      "size_bytes": 93863006,
+      "source_sha256": "0825711c06706ca643c640e540e6a14dfa4d7a264b6b800104314ba2b55bcec4",
+      "active_required_path": "runs/detect/taco/weights/best.pt",
+      "copied": true
+    },
+    {
+      "id": "datasets",
+      "classification": "HOLD",
+      "source": "project dataset directories present in checkout",
+      "file_count": 1,
+      "size_bytes": 97,
+      "source_sha256": "8150513f56bbad1ca8e129c8cbb488273a4a34b7b15fbaa3377445789a48703f",
+      "note": "TACO and PAI source datasets were not present under this checkout",
+      "copied": true
+    },
+    {
+      "id": "calibration",
+      "classification": "ACTIVE",
+      "source": "calibration-named files plus aruco_id0.png, aruco_pose.yaml and sim_camera_correspondences.json",
+      "file_count": 13,
+      "size_bytes": 127900,
+      "source_sha256": "1fda9b3a4c64244db422c67e6a978a7c4188a943703a69713e39bbe11c9b49ca",
+      "copied": true
+    },
+    {
+      "id": "evidence",
+      "classification": "ACTIVE_AND_ARCHIVE_CANDIDATE",
+      "source": "/Users/imaichika/robot/artifacts",
+      "file_count": 1032,
+      "size_bytes": 46192314,
+      "source_sha256": "069d15e46ec16ad30c61ef7decde38d76e39cfe01a3ae4c08956b343375bf4ca",
+      "copied": true
+    },
+    {
+      "id": "documentation",
+      "classification": "ACTIVE",
+      "source": "all project Markdown and notebooks before audit outputs",
+      "file_count": 35,
+      "size_bytes": 299853,
+      "source_sha256": "72c1853f68d6f8155e82e52e511e6b7c09394cef0ae9db6c359c1b8db862c720",
+      "copied": true
+    },
+    {
+      "id": "environment",
+      "classification": "ACTIVE",
+      "source": "requirements.txt, Dockerfile, compose.yaml, supervisord.conf and .gitignore",
+      "file_count": 6,
+      "size_bytes": 13230,
+      "source_sha256": "cfd9ed9daa0fdf53c2407829f4fb7ba7068e1c2ea9c56cc85297dd47734eb540",
+      "copied": true
+    }
+  ],
+  "archive_candidates": [
+    {
+      "path": ".git/objects/pack/tmp_pack_*",
+      "classification": "REGENERABLE_CANDIDATE",
+      "count": 24,
+      "size_bytes": 5913706784,
+      "action": "REMOVED_AFTER_VERIFIED_BACKUP_GIT_GC"
+    },
+    {
+      "path": ".venv",
+      "classification": "REGENERABLE",
+      "allocated_kib": 1041916,
+      "action": "approval_required_after_environment_rebuild_test"
+    },
+    {
+      "path": "runs/detect/taco/weights/last.pt",
+      "classification": "ARCHIVE_CANDIDATE",
+      "size_bytes": 20710725,
+      "action": "REMOVED_AFTER_VERIFIED_BACKUP"
+    },
+    {
+      "path": "runs/detect/taco/weights/args.pt",
+      "classification": "ARCHIVE_CANDIDATE",
+      "size_bytes": 20739909,
+      "action": "REMOVED_AFTER_VERIFIED_BACKUP"
+    },
+    {
+      "path": "runs/detect/train/weights/last (1).pt",
+      "classification": "ARCHIVE_CANDIDATE",
+      "size_bytes": 20740421,
+      "action": "REMOVED_AFTER_VERIFIED_BACKUP"
+    },
+    {
+      "path": "runs/detect/real_finetune/weights/best.pt",
+      "classification": "HOLD_DEPENDENCY_UNCLEAR",
+      "size_bytes": 5387589,
+      "action": "do_not_remove_until_final_model_selection"
+    },
+    {
+      "path": "/Users/imaichika/.colima",
+      "classification": "HOLD_ACTIVE_ENVIRONMENT",
+      "allocated_kib": 36636712,
+      "action": "never_auto_delete_or_prune"
+    }
+  ]
+}

@@ -6,6 +6,14 @@ SOURCE = pathlib.Path(__file__).resolve().parents[1] / "pico" / "pico_relay.py"
 
 
 class PicoRelaySafetyTests(unittest.TestCase):
+    def test_final_demo_uses_uart1_gp4_gp5_and_keeps_drive_locked(self):
+        source = SOURCE.read_text()
+        self.assertIn("uart = machine.UART(\n    1,", source)
+        self.assertIn("tx=machine.Pin(4)", source)
+        self.assertIn("rx=machine.Pin(5)", source)
+        self.assertIn("ALLOW_NONZERO_DRIVE = False", source)
+        self.assertNotIn("UDP", source)
+
     def test_network_waits_are_finite_and_reconnect(self):
         source = SOURCE.read_text()
         self.assertIn("WIFI_CONNECT_TIMEOUT_MS", source)

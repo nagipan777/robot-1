@@ -9,7 +9,7 @@ class UncalibratedTargetGuardTests(unittest.TestCase):
     def test_metric_target_requires_calibration_before_transform(self):
         source = (ROOT / "simulation/vision_turn_controller.py").read_text()
         guard = source.index("calibration_allowed =")
-        transform = source.index("self.target_odom = transform_point", guard)
+        transform = source.index("candidate_target = transform_point", guard)
         publish = source.index("self.publish_target", transform)
         self.assertLess(guard, transform)
         self.assertLess(transform, publish)

@@ -41,7 +41,7 @@ def yaw_from_quaternion(quaternion):
 class MultiTargetTestNode(Node):
     def __init__(self):
         super().__init__("multi_target_navigation_test")
-        self.target_publisher = self.create_publisher(PointStamped, "/litter/target_odom", 10)
+        self.target_publisher = self.create_publisher(PointStamped, "/litter/target_candidate_odom", 10)
         self.stop_publisher = self.create_publisher(Twist, "/cmd_vel_unstamped", 10)
         self.create_subscription(PoseStamped, "/robot/pose", self.on_pose, 10)
         self.create_subscription(Twist, "/cmd_vel_unstamped", self.on_command, 10)
@@ -345,8 +345,8 @@ def main():
         "calibration_validation_max_error_m": calibration_error,
         "speed_limit_m_s": config["max_linear_speed_m_s"],
         "arrival_epsilon_m": arrival_epsilon,
-        "target_input_topic": "/litter/target_odom",
-        "target_output_topic": "/litter/target",
+        "target_input_topic": "/litter/target_candidate_odom",
+        "target_output_topic": "/litter/target_candidate",
         "pose_topic": "/robot/pose",
         "goals": [],
     }
@@ -374,7 +374,7 @@ def main():
                     for info in node.get_subscriptions_info_by_topic(topic)
                 ],
             }
-            for topic in ("/litter/target_odom", "/litter/target", "/robot/pose")
+            for topic in ("/litter/target_candidate_odom", "/litter/target_candidate", "/litter/target", "/robot/pose")
         }
 
         set_controller_parameter("control_enabled", "false")

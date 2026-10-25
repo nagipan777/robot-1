@@ -1,18 +1,38 @@
 import machine
 import time
 
+from roomba_diagnostic_codec import decode_diagnostic_response
+
 
 # Change this manually to 19200 if the Roomba is configured for that rate.
 # This program never changes the baud rate automatically.
-BAUDRATE = 19200
+BAUDRATE = 115200
 
 RESPONSE_TIMEOUT_MS = 2000
 DRAIN_TIMEOUT_MS = 200
-EXPECTED_MIN_MV = 10000
-EXPECTED_MAX_MV = 18000
 
 START = bytes([128])
-SENSORS_BATTERY_VOLTAGE = bytes([142, 22])
+QUERY_LIST = 149
+SENSOR_CHARGING_STATE = 21
+SENSOR_VOLTAGE = 22
+SENSOR_BATTERY_CHARGE = 25
+SENSOR_BATTERY_CAPACITY = 26
+SENSOR_CHARGING_SOURCES = 34
+SENSOR_OI_MODE = 35
+SENSOR_BUMPS_AND_WHEEL_DROPS = 7
+DIAGNOSTIC_QUERY = bytes(
+    [
+        QUERY_LIST,
+        7,
+        SENSOR_CHARGING_STATE,
+        SENSOR_VOLTAGE,
+        SENSOR_BATTERY_CHARGE,
+        SENSOR_BATTERY_CAPACITY,
+        SENSOR_CHARGING_SOURCES,
+        SENSOR_OI_MODE,
+        SENSOR_BUMPS_AND_WHEEL_DROPS,
+    ]
+)
 
 
 def format_hex(data):
@@ -58,36 +78,56 @@ def read_exact(uart, size, timeout_ms):
     return bytes(received)
 
 
-def report_voltage_response(response):
+def report_diagnostic_response(response):
     print("  Raw response:", format_hex(response))
-
-    if len(response) == 0:
-        print("  Result: no response (0 of 2 bytes received)")
-        return
-
-    if len(response) == 1:
-        print("  Result: partial response (1 of 2 bytes received)")
-        return
-
-    millivolts = (response[0] << 8) | response[1]
-    volts = millivolts / 1000
-
-    if EXPECTED_MIN_MV <= millivolts <= EXPECTED_MAX_MV:
-        print("  Result: valid 2-byte response")
-        print("  Battery voltage: {} mV ({:.3f} V)".format(millivolts, volts))
-    else:
-        print("  Result: 2-byte response, but voltage is outside the expected range")
-        print("  Battery voltage: {} mV ({:.3f} V)".format(millivolts, volts))
+    try:
+        status = decode_diagnostic_response(response)
+    except (TypeError, ValueError) as exc:
+        print("  Result: invalid response ({})".format(exc))
+        return False
+    print(
+        "  Charging: {} ({})".format(
+            status["charging_state"], status["charging_state_name"]
+        )
+    )
+    print(
+        "  Battery voltage: {} mV ({:.3f} V); informational only".format(
+            status["voltage_mv"], status["voltage_mv"] / 1000
+        )
+    )
+    print(
+        "  Battery charge/capacity: {} / {} mAh ({}%)".format(
+            status["charge_mah"],
+            status["capacity_mah"],
+            "unknown"
+            if status["charge_percent"] is None
+            else "{:.1f}".format(status["charge_percent"]),
+        )
+    )
+    print(
+        "  Charging source: internal={} home_base={}".format(
+            status["charging_source_internal"],
+            status["charging_source_home_base"],
+        )
+    )
+    print("  OI mode: {} ({})".format(status["oi_mode"], status["oi_mode_name"]))
+    print(
+        "  Wheel drop: left={} right={}".format(
+            status["wheel_drop_left"],
+            status["wheel_drop_right"],
+        )
+    )
+    return True
 
 
 uart = machine.UART(
-    0,
+    1,
     baudrate=BAUDRATE,
     bits=8,
     parity=None,
     stop=1,
-    tx=machine.Pin(0),
-    rx=machine.Pin(1),
+    tx=machine.Pin(4),
+    rx=machine.Pin(5),
 )
 
 brc = machine.Pin(2, machine.Pin.OUT, value=1)  # GP2 → Mini-DIN ピン5(BRC)
@@ -108,9 +148,9 @@ try:
         if drained:
             print("  Discarded {} stale byte(s) before request".format(drained))
 
-        uart.write(SENSORS_BATTERY_VOLTAGE)
-        response = read_exact(uart, 2, RESPONSE_TIMEOUT_MS)
-        report_voltage_response(response)
+        uart.write(DIAGNOSTIC_QUERY)
+        response = read_exact(uart, 10, RESPONSE_TIMEOUT_MS)
+        report_diagnostic_response(response)
 
         if attempt < 3:
             time.sleep_ms(500)

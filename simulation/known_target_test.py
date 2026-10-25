@@ -83,7 +83,7 @@ def set_controller_parameter(name, value):
 class KnownTargetTest(Node):
     def __init__(self):
         super().__init__("known_target_navigation_test")
-        self.target_publisher = self.create_publisher(PointStamped, "/litter/target_odom", 10)
+        self.target_publisher = self.create_publisher(PointStamped, "/litter/target_candidate_odom", 10)
         self.stop_publisher = self.create_publisher(Twist, "/cmd_vel_unstamped", 10)
         self.create_subscription(PoseStamped, "/robot/pose", self.on_pose, 10)
         self.create_subscription(Twist, "/cmd_vel_unstamped", self.on_command, 10)
@@ -172,8 +172,8 @@ def main():
         "stop_reason": "setup failure",
         "calibration_validation_max_error_m": calibration_error,
         "speed_limit_m_s": test_config["max_linear_speed_m_s"],
-        "target_input_topic": "/litter/target_odom",
-        "target_output_topic": "/litter/target",
+        "target_input_topic": "/litter/target_candidate_odom",
+        "target_output_topic": "/litter/target_candidate",
         "pose_topic": "/robot/pose",
     }
 

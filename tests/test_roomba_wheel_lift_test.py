@@ -19,6 +19,16 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 
 class WheelLiftTestProfileTests(unittest.TestCase):
+    def test_publisher_qos_keeps_only_latest_reliable_sample(self):
+        source = (ROOT / "simulation" / "roomba_wheel_lift_test.py").read_text()
+        qos = source[
+            source.index("COMMAND_QOS =") : source.index("class RoombaWheelLiftTest")
+        ]
+        self.assertIn("history=HistoryPolicy.KEEP_LAST", qos)
+        self.assertIn("depth=1", qos)
+        self.assertIn("reliability=ReliabilityPolicy.RELIABLE", qos)
+        self.assertIn("durability=DurabilityPolicy.VOLATILE", qos)
+
     def run_launcher(self, mode, *extra):
         with tempfile.TemporaryDirectory() as temporary_directory:
             fake_docker = pathlib.Path(temporary_directory) / "docker"

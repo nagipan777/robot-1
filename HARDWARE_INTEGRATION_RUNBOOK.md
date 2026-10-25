@@ -28,9 +28,23 @@ flowchart LR
     drybridge -->|"TCP 9001, CRC/ACK, UARTなし"| picodry["Pico dry-run receiver"]
     adapter -.-> physical["/roomba/cmd_vel_unstamped"]
     physical -.-> bridge["roomba_bridge_tcp, drive_enabled=false"]
-    bridge -.->|"TCP 9000, STOP/Safe/ARM gate"| relay["Pico pico_relay.py, ALLOW_NONZERO_DRIVE=False"]
-    relay -.->|"UART 115200 8N1（実績あり、今回未接続）"| roomba["Roomba 680 OI"]
+    bridge -.->|"Wi-Fi / TCP 9000, STOP/Safe/ARM gate"| relay["Pico W, mobile-battery USB 5 V, ALLOW_NONZERO_DRIVE=False"]
+    relay -.->|"UART1 GP4/GP5, 115200 8N1"| roomba["Roomba 680 OI"]
 ```
+
+### 提出用実機デモの固定構成
+
+```mermaid
+flowchart LR
+    mac["MacBook / ROS2"] -->|"Wi-Fi / TCP 9000"| pico["Pico W"]
+    battery["モバイルバッテリー / USB 5 V"] -->|"給電のみ"| pico
+    pico -->|"UART1: GP4 TX / GP5 RX"| roomba["Roomba 680 / OI Safe"]
+```
+
+MacBookとPico WはUSB接続しない。証跡にはTCP 9000のACK、ROS2 bridgeログ、終了後の
+STOP限定診断、物理停止の映像を使用する。Pico内部ログは必須にせず、UDP診断経路も追加しない。
+この構成でもPico電源断またはUART断では新しいSTOPをRoombaへ書き込めないため、有人監視、
+物理的な封じ込め、Safeモード、単発の低速・短時間制限というGo/No-Go条件を維持する。
 
 再利用する既存実装:
 
@@ -125,7 +139,7 @@ Drive（137/145）、Safe（131）、Full（132）、Clean/Dock系opcodeは送�
 明日の手順:
 
 1. Roomba型番、装着バッテリーの品番・化学系・定格電圧を写真とラベルで確認する。
-2. Roombaを接地させず安定台へ置き、GP0/GP1、GND、レベル変換、BRCを無通電で再確認する。
+2. Roombaを接地させず安定台へ置き、UART1のGP4/GP5、GND、レベル変換、BRC GP2を無通電で再確認する。
 3. `roomba_diagnostic_codec.py`と`roomba_uart_probe.py`をPicoへ置き、後者を手動実行する。
 4. 3回とも10バイト応答が一致し、OI modeとwheel dropを記録する。
 5. charging sourceがtrue、charging stateが0以外、またはwheel dropが期待と違う場合は
@@ -238,6 +252,80 @@ ros2 topic pub --once /localization/encoder_counts_mock std_msgs/msg/String \
 `localization-hardware-live`はPhase 4Cでは必ず失敗終了する。TCP 9000、UART、実機OIへの
 接続手順はここには追加しない。Gazeboの`map_frame_adapter`と融合の`/robot/pose`を同時に
 有効化してはならない。
+
+### Pico配備版の提出前照合
+
+走行中には行わない。Roombaを停止し、両ロックをfalseにした保守状態で、実際にPicoへ保存した
+`main.py`をリポジトリ外の`/tmp/pico-main-deployed.py`へ取得する。Wi-Fi認証情報を含むため
+リポジトリへコピー・追加しない。
+
+```bash
+cd /Users/imaichika/robot
+sed -E 's/^(SSID|PASSWORD) = .*/\1 = ""/' \
+  /tmp/pico-main-deployed.py > /tmp/pico-main-normalized.py
+sed -E 's/^(SSID|PASSWORD) = .*/\1 = ""/' \
+  pico/pico_relay.py > /tmp/pico-repo-normalized.py
+diff -u /tmp/pico-repo-normalized.py /tmp/pico-main-normalized.py
+shasum -a 256 /tmp/pico-repo-normalized.py /tmp/pico-main-normalized.py
+```
+
+PASS条件は`diff`出力なし、SHA-256一致、配備版の`ALLOW_NONZERO_DRIVE=False`、UART1、
+GP4/GP5、115200bps、500ms watchdogである。不一致は内容を確認するまで実機統合No-Go。
+
+UART部分書込みについては、`5`だけを成功とし、`4`、`0`、`None`は成功ACKを返さず、
+sequenceを進めず、STOP試行と`LATCHED_STOP`へ移ることをモック確認済み。OIは区切りのない
+5バイトDrive列なので、部分フレームの残りやDrive全体は自動再送しない。
+
+### 実カメラYOLO→Navigation dry-run最終確認
+
+Pico IPを渡さずに起動し、TCP 9000と実機トピックを使用しない。
+
+```bash
+cd /Users/imaichika/robot
+./simulation/sim.sh real-camera-dry-run-up
+```
+
+Mac側:
+
+```bash
+cd /Users/imaichika/robot
+.venv/bin/python vision.py \
+  --camera 0 --width 1280 --height 960 \
+  --weights datasets/PAI_output/best.pt \
+  --confidence 0.30 --http-timeout 2.0
+```
+
+ROS側確認:
+
+```bash
+./simulation/sim.sh shell
+ros2 topic echo /webcam/detections
+ros2 topic echo /litter/target_decision
+ros2 topic echo /nav/cmd_vel_unstamped
+ros2 topic echo /roomba/cmd_vel_dry_run
+ros2 topic info -v /roomba/cmd_vel_unstamped
+```
+
+PASS条件は、検出から目標判断とdry-run Twistまで時刻が進み、50cm近傍・古い姿勢・古い検出が
+拒否され、検出喪失と到達時にゼロ指令となり、同一目標再検出で停止ラッチが解除されず、
+`/roomba/cmd_vel_unstamped`のPublisherが0であること。`/roomba/cmd_vel_dry_run`の非ゼロ値は
+計算結果であり実機送信ではない。
+
+### 提出前の未解決事項の分類
+
+実機走行を妨げる必須問題:
+
+- Picoから取得した配備版と`pico/pico_relay.py`の正規化後ハッシュが未照合。不一致のまま走行しない。
+- 実機で再発したUART部分書込み（Drive ACK `status=0x01`）の原因は未特定。再発時は走行を中止し、成功ACKとして扱わない。
+- ArUcoの実カメラ静止試験が未完了。検証済みでない姿勢を実機Navigationへ入力しない。
+
+提出後の改善課題:
+
+- Pico内部UARTの空き容量・部分書込み発生条件を追加計測し、電源・配線・送信負荷との相関を調べる。
+- UDP等の独立診断転送、ArUcoとwheel odometryの本格融合、YOLOの追加学習は提出後に扱う。
+
+実カメラYOLO dry-runは実機走行を伴わない提出前の統合確認であり、未実施でも安全ロックを
+解除してはならない。
 
 ## 7. Go / No-Go
 

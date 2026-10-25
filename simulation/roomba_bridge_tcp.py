@@ -22,8 +22,10 @@ from std_msgs.msg import UInt32
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 
+from differential_drive import twist_to_wheel_speeds
 from roomba_tcp_transport import (
     CommandState,
+    DriveSessionLimiter,
     RoombaDiagnosticError,
     RoombaTcpTransport,
     SafeModeGate,
@@ -33,7 +35,10 @@ from roomba_tcp_transport import (
 
 COMMAND_QOS = QoSProfile(
     history=HistoryPolicy.KEEP_LAST,
-    depth=10,
+    # Velocity is state, not an event. Retaining old samples can replay stale
+    # motion after synchronous TCP/UART work blocks the executor. Keep only
+    # the newest command (including STOP), while retaining reliable delivery.
+    depth=1,
     reliability=ReliabilityPolicy.RELIABLE,
     durability=DurabilityPolicy.VOLATILE,
 )
@@ -53,6 +58,9 @@ class RoombaBridgeTcp(Node):
         self.declare_parameter("command_timeout", 0.5)
         self.declare_parameter("safe_check_interval", 0.25)
         self.declare_parameter("arm_hold_timeout", 1.0)
+        # Disabled by default.  The short-E wheel-lift launcher sets this to a
+        # conservative sub-second value.  Values above one second are refused.
+        self.declare_parameter("max_drive_session_duration", 0.0)
         # Compatibility guard only. The normal bridge never disables its
         # host-side timeout; Pico-only watchdog tests require a separate path.
         self.declare_parameter("watchdog_test_mode", False)
@@ -70,6 +78,9 @@ class RoombaBridgeTcp(Node):
         self.command_timeout = self.get_parameter("command_timeout").value
         self.safe_check_interval = self.get_parameter("safe_check_interval").value
         self.arm_hold_timeout = self.get_parameter("arm_hold_timeout").value
+        self.max_drive_session_duration = self.get_parameter(
+            "max_drive_session_duration"
+        ).value
         self.watchdog_test_mode = self.get_parameter("watchdog_test_mode").value
         self.watchdog_test_silence = self.get_parameter(
             "watchdog_test_silence"
@@ -102,6 +113,9 @@ class RoombaBridgeTcp(Node):
         self.command_state = CommandState(
             self.drive_enabled, self.command_timeout, time.monotonic
         )
+        self.drive_session_limiter = DriveSessionLimiter(
+            self.max_drive_session_duration, time.monotonic
+        )
         self.watchdog_test_state = WatchdogTestCommandState(
             self.watchdog_test_silence, time.monotonic
         )
@@ -111,6 +125,7 @@ class RoombaBridgeTcp(Node):
         self.next_retry = 0.0
         self.watchdog_preflight_logged = False
         self.arm_deadline = 0.0
+        self.bounded_drive_rejection_logged = False
         self.create_subscription(Twist, self.command_topic, self.on_cmd, COMMAND_QOS)
         self.create_subscription(UInt32, self.arm_topic, self.on_arm, COMMAND_QOS)
         self.create_timer(0.05, self.tick)  # 20Hz
@@ -183,6 +198,7 @@ class RoombaBridgeTcp(Node):
             return
         if msg.linear.x == 0.0 and msg.angular.z == 0.0:
             self.clear_command()
+            self.drive_session_limiter.latch_stop()
             if self.transport.connected:
                 self.get_logger().info(
                     "normal STOP received and sent; monotonic=%.6f"
@@ -206,6 +222,23 @@ class RoombaBridgeTcp(Node):
                 "Rejected non-zero command: explicit ARM generation is required"
             )
             return
+        session_event = self.drive_session_limiter.observe_nonzero()
+        if session_event in ("expired", "latched"):
+            self.clear_command()
+            if session_event == "expired":
+                self.expire_bounded_drive()
+            elif not self.bounded_drive_rejection_logged:
+                self.bounded_drive_rejection_logged = True
+                self.get_logger().warn(
+                    "Rejected non-zero command: bounded drive STOP is latched; "
+                    "a new explicit ARM is required"
+                )
+            return
+        if session_event == "started":
+            self.get_logger().warn(
+                "bounded drive session started: limit=%.3fs monotonic=%.6f"
+                % (self.max_drive_session_duration, time.monotonic())
+            )
         if self.watchdog_test_mode:
             self.watchdog_test_state.update(msg.linear.x, msg.angular.z)
         else:
@@ -224,6 +257,8 @@ class RoombaBridgeTcp(Node):
             return
         try:
             self.transport.arm(generation)
+            self.drive_session_limiter.arm()
+            self.bounded_drive_rejection_logged = False
             self.clear_command()
             self.arm_deadline = time.monotonic() + self.arm_hold_timeout
             self.get_logger().warn(
@@ -240,6 +275,10 @@ class RoombaBridgeTcp(Node):
 
         if self.watchdog_test_mode:
             self.tick_watchdog_test()
+            return
+
+        if self.drive_session_limiter.poll():
+            self.expire_bounded_drive()
             return
 
         command = self.command_state.current()
@@ -266,13 +305,31 @@ class RoombaBridgeTcp(Node):
                 return
 
         try:
-            self.transport.send_twist(
+            sequence = self.transport.send_twist(
                 command[0],
                 command[1],
                 track_width_m=self.wheel_base,
                 max_speed_mm_s=self.max_speed_mm_s,
             )
-        except (OSError, ConnectionError, TypeError, ValueError) as error:
+            if self.drive_session_limiter.enabled:
+                left, right = twist_to_wheel_speeds(
+                    command[0],
+                    command[1],
+                    track_width_m=self.wheel_base,
+                    max_wheel_speed_mm_s=self.max_speed_mm_s,
+                )
+                self.get_logger().info(
+                    "bounded Drive ACK: status=0x03 sequence=%d right=%d left=%d "
+                    "monotonic=%.6f"
+                    % (sequence, right, left, time.monotonic())
+                )
+        except (
+            OSError,
+            ConnectionError,
+            RoombaDiagnosticError,
+            TypeError,
+            ValueError,
+        ) as error:
             self.handle_send_failure(error)
 
     def tick_watchdog_test(self):
@@ -297,7 +354,13 @@ class RoombaBridgeTcp(Node):
                     track_width_m=self.wheel_base,
                     max_speed_mm_s=self.max_speed_mm_s,
                 )
-            except (OSError, ConnectionError, TypeError, ValueError) as error:
+            except (
+                OSError,
+                ConnectionError,
+                RoombaDiagnosticError,
+                TypeError,
+                ValueError,
+            ) as error:
                 self.handle_send_failure(error)
             return
         if event == "silence_start":
@@ -316,10 +379,21 @@ class RoombaBridgeTcp(Node):
             self.send_stop()
 
     def send_stop(self):
+        self.drive_session_limiter.latch_stop()
         try:
             self.transport.send_stop()
         except (OSError, ConnectionError) as error:
             self.handle_send_failure(error)
+
+    def expire_bounded_drive(self):
+        self.clear_command()
+        self.bounded_drive_rejection_logged = False
+        self.get_logger().warn(
+            "bounded drive deadline reached: STOP sent, ARM revoked; "
+            "limit=%.3fs monotonic=%.6f"
+            % (self.max_drive_session_duration, time.monotonic())
+        )
+        self.send_stop()
 
     def handle_send_failure(self, error):
         self.get_logger().warn(f"送信失敗、再接続します: {error}")

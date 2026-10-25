@@ -18,7 +18,9 @@ from roomba_wheel_lift_test_core import (
 
 COMMAND_QOS = QoSProfile(
     history=HistoryPolicy.KEEP_LAST,
-    depth=10,
+    # Match the bridge: newer velocity commands supersede older ones. Reliable
+    # delivery is retained so the final STOP is not made best-effort.
+    depth=1,
     reliability=ReliabilityPolicy.RELIABLE,
     durability=DurabilityPolicy.VOLATILE,
 )

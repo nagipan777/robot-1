@@ -19,6 +19,7 @@ ACCEPT_TIMEOUT_S = 1
 UART_DIAGNOSTIC_TIMEOUT_MS = 1000
 UART_DRAIN_QUIET_MS = 10
 UART_DRAIN_TIMEOUT_MS = 100
+TCP_SEND_TIMEOUT_MS = 100
 ALLOW_NONZERO_DRIVE = False
 
 STOP = bytes([145, 0, 0, 0, 0])
@@ -71,13 +72,13 @@ WOULD_BLOCK = tuple(
 )
 
 uart = machine.UART(
-    0,
+    1,
     baudrate=BAUD,
     bits=8,
     parity=None,
     stop=1,
-    tx=machine.Pin(0),
-    rx=machine.Pin(1),
+    tx=machine.Pin(4),
+    rx=machine.Pin(5),
 )
 brc = machine.Pin(2, machine.Pin.OUT, value=1)
 led = machine.Pin("LED", machine.Pin.OUT)
@@ -244,8 +245,18 @@ def hex_bytes(data):
 
 def send_all(connection, data):
     offset = 0
+    started = time.ticks_ms()
     while offset < len(data):
-        sent = connection.send(data[offset:])
+        try:
+            sent = connection.send(data[offset:])
+        except OSError as error:
+            code = error.args[0] if error.args else None
+            if code not in WOULD_BLOCK:
+                raise
+            if time.ticks_diff(time.ticks_ms(), started) >= TCP_SEND_TIMEOUT_MS:
+                raise OSError("TCP send timed out")
+            time.sleep_ms(1)
+            continue
         if sent is None:
             sent = len(data) - offset
         if sent <= 0:

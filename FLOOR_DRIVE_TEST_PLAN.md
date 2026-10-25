@@ -20,7 +20,7 @@
 
 1. 試験IDを発行し、写真、日時、担当者、床面状態を記録する。
 2. バッテリーの膨張、発熱、液漏れ、電圧、充電状態を確認する。充電器を外す。
-3. 無通電でGP0/GP1、BRC、共通GND、レベル変換器、Roomba Mini-DINを確認する。
+3. 無通電でUART1のGP4/GP5、BRC GP2、共通GND、レベル変換器、Roomba Mini-DINを確認する。
 4. PicoのIP、9000 listener、protocol v2配備版、`ALLOW_NONZERO_DRIVE=False`を確認する。
 5. ROS側の4安全フラグがfalseであることと、実機速度トピックのPublisherを確認する。
 6. 読み取り診断3/3、STOP ACK、要求速度0、OI Safe、wheel drop、charging sourceを確認する。

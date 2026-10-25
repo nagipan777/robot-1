@@ -1,5 +1,6 @@
 import importlib.util
 import io
+import errno
 import pathlib
 import sys
 import types
@@ -17,11 +18,14 @@ class FakeUart:
         self.read_buffer = bytearray()
         self.responses = {}
         self.partial_write_for = None
+        self.write_result_for = {}
 
     def write(self, data):
         data = bytes(data)
         self.writes.append(data)
         self.read_buffer.extend(self.responses.get(data, b""))
+        if data in self.write_result_for:
+            return self.write_result_for[data]
         if data == self.partial_write_for:
             return max(0, len(data) - 1)
         return len(data)
@@ -47,6 +51,18 @@ class FakeConnection:
         size = len(data) if self.max_send is None else min(self.max_send, len(data))
         self.sent.extend(data[:size])
         return size
+
+
+class TemporarilyBlockedConnection(FakeConnection):
+    def __init__(self, blocked_sends):
+        super().__init__()
+        self.blocked_sends = blocked_sends
+
+    def send(self, data):
+        if self.blocked_sends:
+            self.blocked_sends -= 1
+            raise OSError(errno.EAGAIN)
+        return super().send(data)
 
 
 class FakeTime:
@@ -108,6 +124,30 @@ def load_relay():
 
 
 class PicoRelayProtocolTests(unittest.TestCase):
+    def test_uart_write_exact_requires_the_complete_return_count(self):
+        frame = b"\x91\x00\x14\x00\x14"
+        for result, expected in ((5, True), (4, False), (0, False), (None, False)):
+            with self.subTest(result=result):
+                relay, uart = load_relay()
+                uart.write_result_for[frame] = result
+                self.assertIs(relay.uart_write_exact(frame), expected)
+                self.assertEqual(uart.writes, [frame])
+
+    def test_nonblocking_tcp_send_retries_eagain_without_losing_ack(self):
+        relay, _uart = load_relay()
+        connection = TemporarilyBlockedConnection(blocked_sends=2)
+
+        relay.send_all(connection, b"ack")
+
+        self.assertEqual(bytes(connection.sent), b"ack")
+
+    def test_nonblocking_tcp_send_timeout_is_finite(self):
+        relay, _uart = load_relay()
+        connection = TemporarilyBlockedConnection(blocked_sends=1000)
+
+        with self.assertRaisesRegex(OSError, "TCP send timed out"):
+            relay.send_all(connection, b"ack")
+
     def test_init_still_allows_ready_path_when_uart_is_not_quiet(self):
         relay, _uart = load_relay()
         relay.drain_uart_until_quiet = lambda: False
@@ -425,22 +465,34 @@ class PicoRelayProtocolTests(unittest.TestCase):
         # ARM ACK (7 bytes), then one positive and two negative Drive ACKs.
         self.assertEqual(len(connection.sent), 7 + 13 * 3)
 
-    def test_drive_uart_partial_write_returns_negative_ack_and_latches_stop(self):
-        relay, uart = load_relay()
-        relay.ALLOW_NONZERO_DRIVE = True
-        connection = FakeConnection()
-        relay.forward_valid_frames(bytearray(self.arm_frame(relay, 41)), connection)
-        drive = self.drive_frame(relay, 41, sequence=1)
-        uart.partial_write_for = b"\x91\x00\x14\x00\x14"
+    def test_incomplete_drive_uart_results_return_negative_ack_and_latch_stop(self):
+        frame = b"\x91\x00\x14\x00\x14"
+        for result in (4, 0, None):
+            with self.subTest(result=result):
+                relay, uart = load_relay()
+                relay.ALLOW_NONZERO_DRIVE = True
+                connection = FakeConnection()
+                relay.forward_valid_frames(
+                    bytearray(self.arm_frame(relay, 41)), connection
+                )
+                drive = self.drive_frame(relay, 41, sequence=1)
+                uart.write_result_for[frame] = result
 
-        _remaining, activity = relay.forward_valid_frames(bytearray(drive), connection)
+                _remaining, activity = relay.forward_valid_frames(
+                    bytearray(drive), connection
+                )
 
-        self.assertEqual(activity, 0)
-        self.assertEqual(relay.motion_latch.state, relay.MotionLatch.LATCHED_STOP)
-        ack = bytes(connection.sent[-13:])
-        self.assertEqual(ack[2], relay.DRIVE_ACK_VALIDATED)
-        self.assertNotEqual(ack[2] & relay.DRIVE_ACK_UART_WRITTEN, relay.DRIVE_ACK_UART_WRITTEN)
-        self.assertEqual(uart.writes[-1], relay.STOP)
+                self.assertEqual(activity, 0)
+                self.assertEqual(
+                    relay.motion_latch.state, relay.MotionLatch.LATCHED_STOP
+                )
+                ack = bytes(connection.sent[-13:])
+                self.assertEqual(ack[2], relay.DRIVE_ACK_VALIDATED)
+                self.assertNotEqual(
+                    ack[2] & relay.DRIVE_ACK_UART_WRITTEN,
+                    relay.DRIVE_ACK_UART_WRITTEN,
+                )
+                self.assertEqual(uart.writes, [frame, relay.STOP])
 
     def test_stop_and_diagnostic_do_not_release_latched_stop(self):
         relay, uart = load_relay()

@@ -1,0 +1,25 @@
+wheel_odometry:
+  ros__parameters:
+    # Preview accepts mock JSON only. It contains no TCP, UART, or OI transport.
+    preview_enabled: true
+    input_topic: /localization/encoder_counts_mock
+    output_topic: /localization/wheel_odom
+    # Provisional Roomba 680 values; measure/verify before hardware-live use.
+    encoder_counts_per_rev: 508.8
+    wheel_diameter_m: 0.072
+    wheel_separation_m: 0.235
+    max_tick_delta: 2000
+
+localization_fusion:
+  ros__parameters:
+    aruco_topic: /localization/aruco_pose
+    odom_topic: /localization/wheel_odom
+    pose_topic: /robot/pose
+    status_topic: /localization/status
+    pose_output_enabled: false
+    correction_gain: 0.25
+    max_position_innovation_m: 0.5
+    max_yaw_innovation_rad: 0.8
+    max_aruco_age: 0.5
+    max_odom_age: 0.5
+    max_dead_reckon_age: 2.0

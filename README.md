@@ -589,7 +589,7 @@ Pico Wは500msのUART停止監視を維持します。TCP上の任意データ�
 
 - Roombaを床から浮かせるか、車輪が接地しない安定した台へ置く。
 - 直ちにCLEANボタンを押せる位置で作業する。
-- GP0→Roomba RX、GP1←Roomba TX、GND共通、適切なレベル変換を再確認する。
+- UART1のGP4→Roomba RX、GP5←Roomba TX、GND共通、適切なレベル変換を再確認する。
 - Pico Wのシェルで`Wi-Fi OK`と`listening on <IP>:<PORT>`を確認する。
 - ROS 2側で実機用の駆動許可ノードが他に起動していないことを確認する。
 - `git status`でSSIDまたはパスワードを含む配備用ファイルが追加されていないことを確認する。

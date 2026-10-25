@@ -26,6 +26,14 @@ class RoombaBridgeTcpIntegrationTests(unittest.TestCase):
         self.assertIn("COMMAND_QOS", source)
         self.assertIn("topic=%s type=geometry_msgs/msg/Twist", source)
 
+    def test_command_qos_keeps_only_latest_reliable_sample(self):
+        source = (ROOT / "simulation" / "roomba_bridge_tcp.py").read_text()
+        qos = source[source.index("COMMAND_QOS =") : source.index("class RoombaBridgeTcp")]
+        self.assertIn("history=HistoryPolicy.KEEP_LAST", qos)
+        self.assertIn("depth=1", qos)
+        self.assertIn("reliability=ReliabilityPolicy.RELIABLE", qos)
+        self.assertIn("durability=DurabilityPolicy.VOLATILE", qos)
+
     def test_watchdog_test_keeps_initial_stop_and_safe_diagnostics(self):
         source = (ROOT / "simulation" / "roomba_bridge_tcp.py").read_text()
         connect_start = source.index("    def connect(self):")
@@ -43,6 +51,7 @@ class RoombaBridgeTcpIntegrationTests(unittest.TestCase):
         self.assertIn("bridge will send no TCP/OI", method)
         self.assertIn('"traffic until %.2fs fallback', method)
         self.assertIn("fallback STOP", method)
+        self.assertIn("RoombaDiagnosticError", method)
 
     def test_watchdog_trial_does_not_issue_live_diagnostics(self):
         source = (ROOT / "simulation" / "roomba_bridge_tcp.py").read_text()
@@ -75,6 +84,15 @@ class RoombaBridgeTcpIntegrationTests(unittest.TestCase):
         self.assertIn("query_oi_mode(live=True)", tick)
         self.assertIn("self.safe_gate.observe_mode(mode)", tick)
         self.assertIn("self.handle_safety_failure(error)", tick)
+
+    def test_drive_ack_timeout_uses_existing_fail_safe_handler(self):
+        source = (ROOT / "simulation" / "roomba_bridge_tcp.py").read_text()
+        tick_start = source.index("    def tick(self):")
+        tick = source[tick_start : source.index("    def tick_watchdog_test", tick_start)]
+        send_start = tick.index("self.transport.send_twist(")
+        send_block = tick[send_start:]
+        self.assertIn("RoombaDiagnosticError", send_block)
+        self.assertIn("self.handle_send_failure(error)", send_block)
 
     def test_stop_is_not_blocked_by_safe_gate(self):
         source = (ROOT / "simulation" / "roomba_bridge_tcp.py").read_text()
@@ -125,7 +143,7 @@ class RoombaBridgeTcpIntegrationTests(unittest.TestCase):
     def test_diagnostic_command_remains_stop_only(self):
         sim_script = (ROOT / "simulation" / "sim.sh").read_text()
         start = sim_script.index("  roomba-tcp-diagnostic)")
-        case = sim_script[start : sim_script.index("  roomba-tcp-watchdog)", start)]
+        case = sim_script[start : sim_script.index("  roomba-short-e-bridge)", start)]
         self.assertIn("-p drive_enabled:=false", case)
         self.assertIn("-p diagnostic_on_connect:=true", case)
         self.assertIn("-p watchdog_test_mode:=false", case)
@@ -143,6 +161,27 @@ class RoombaBridgeTcpIntegrationTests(unittest.TestCase):
         self.assertIn("-p watchdog_test_silence:=0.75", case)
         self.assertIn("-p watchdog_test_confirmation:=WHEELS_LIFTED", case)
         self.assertIn("-p max_speed_mm_s:=20", case)
+
+    def test_short_e_launcher_requires_wheel_lift_and_hard_bounds(self):
+        sim_script = (ROOT / "simulation" / "sim.sh").read_text()
+        start = sim_script.index("  roomba-short-e-bridge)")
+        case = sim_script[start : sim_script.index("  roomba-tcp-watchdog)", start)]
+        self.assertIn('"$3" != "WHEELS_LIFTED"', case)
+        self.assertIn("-p drive_enabled:=true", case)
+        self.assertIn("-p diagnostic_on_connect:=true", case)
+        self.assertIn("-p watchdog_test_mode:=false", case)
+        self.assertIn("-p max_speed_mm_s:=20", case)
+        self.assertIn("-p command_timeout:=0.5", case)
+        self.assertIn("-p max_drive_session_duration:=0.4", case)
+        self.assertIn("-p command_topic:=/roomba/cmd_vel_unstamped", case)
+
+    def test_bounded_drive_gate_defaults_off_and_revokes_arm_on_deadline(self):
+        source = (ROOT / "simulation" / "roomba_bridge_tcp.py").read_text()
+        self.assertIn('declare_parameter("max_drive_session_duration", 0.0)', source)
+        self.assertIn("self.drive_session_limiter.poll()", source)
+        self.assertIn("self.expire_bounded_drive()", source)
+        self.assertIn("bounded drive deadline reached: STOP sent, ARM revoked", source)
+        self.assertIn("bounded Drive ACK: status=0x03", source)
 
 
 if __name__ == "__main__":

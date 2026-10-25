@@ -37,12 +37,9 @@ class Stage5CTargetManagementConfigurationTests(unittest.TestCase):
             dockerfile,
         )
 
-    def test_detection_loss_blocks_resume_only_while_control_is_enabled(self):
+    def test_detection_loss_blocks_resume_for_physical_or_dry_run_output(self):
         controller = (ROOT / "simulation/vision_turn_controller.py").read_text()
-        self.assertIn(
-            "preserve_safe_state = safe_management and control_enabled",
-            controller,
-        )
+        self.assertIn("control_enabled or dry_run_enabled", controller)
 
 
 if __name__ == "__main__":

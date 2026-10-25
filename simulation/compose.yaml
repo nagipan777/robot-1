@@ -21,5 +21,10 @@ services:
       ROBOT_Y: "${ROBOT_Y:-0.0}"
       ROBOT_YAW: "${ROBOT_YAW:-0.0}"
       SPAWN_DOCK: "${SPAWN_DOCK:-true}"
+      DRY_RUN_ROBOT_X: "${DRY_RUN_ROBOT_X:-1.50}"
+      DRY_RUN_ROBOT_Y: "${DRY_RUN_ROBOT_Y:-0.00}"
+      DRY_RUN_ROBOT_YAW: "${DRY_RUN_ROBOT_YAW:-0.00}"
+      PICO_DRY_RUN_HOST: "${PICO_DRY_RUN_HOST:-}"
+      PICO_DRY_RUN_PORT: "${PICO_DRY_RUN_PORT:-9001}"
     init: true
     stop_grace_period: 20s

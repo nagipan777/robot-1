@@ -126,7 +126,7 @@ VNC内でGazeboとは別のRVizウィンドウへ切り替えて確認します�
 
 ```bash
 source .venv/bin/activate
-python calibrate_floor.py --camera 0
+python calibrate_floor.py --camera 0 --no-yolo
 ```
 
 校正画面は `vision.py` と同じ既定YOLOモデルを読み込み、`litter` の枠・中心画素を紫色で重ねます。4点クリック後は、その中心画素から変換したodom座標も右側に表示されます。YOLOを使わず校正だけ行う場合は `--no-yolo` を指定します。
@@ -138,7 +138,7 @@ python calibrate_floor.py --camera 0
 3. 右下 → odom `(0.5, -1.0)`
 4. 左下 → odom `(0.5, 1.0)`
 
-4点後は四隅の再投影誤差と中央点 `odom (1.5, 0.0)` が画面・ターミナルに表示されます。`S` で [vision_controller.yaml](vision_controller.yaml) へホモグラフィと画像解像度を保存、`R` でやり直し、`Q` またはEscで中止します。別カメラは `--camera 1` のように指定します。運用時の `vision.py` の解像度が校正時と違う場合、制御ノードは座標を破棄して停止します。
+4点後、4点とは独立に実測した中央点 `odom (1.5, 0.0)` を5回目にクリックします。独立検証点誤差が画面・ターミナルに表示された後、`S` で [vision_controller.yaml](vision_controller.yaml) へホモグラフィと画像解像度を保存、`R` でやり直し、`Q` またはEscで中止します。別カメラは `--camera 1` のように指定します。運用時の `vision.py` の解像度が校正時と違う場合、制御ノードは座標を破棄して停止します。
 
 保存時も `control_enabled: false` と `calibration_ready: false` は維持されます。さらに制御ノードは単位行列を校正済みとして受け付けません。保存後に `./simulation/sim.sh up` で反映し、`/litter/target` とMarkerが実際の床面位置に一致することを確認するまで安全フラグを変更しないでください。
 

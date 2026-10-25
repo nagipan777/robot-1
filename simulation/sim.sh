@@ -50,6 +50,48 @@ case "${1:-help}" in
     echo 'Vision integration world started with control and calibration disabled.'
     echo 'No real-Roomba bridge is started by this command.'
     ;;
+  real-camera-dry-run-up)
+    if [ "$#" -gt 5 ]; then
+      echo "Usage: $0 real-camera-dry-run-up [PICO_IP [X_METRES Y_METRES YAW_RADIANS]]" >&2
+      exit 2
+    fi
+    pico_host="${2:-}"
+    dry_x="${3:-1.50}"
+    dry_y="${4:-0.00}"
+    dry_yaw="${5:-0.00}"
+    if ! colima -p create3 status >/dev/null 2>&1; then
+      colima start create3 --cpu 4 --memory 6 --disk 24 --vm-type vz \
+        --mount none --activate=false --ssh-config=false
+    fi
+    SIM_WORLD=room VISION_CONTROLLER_CONFIG=/etc/vision-controller.real-dry-run.yaml \
+      PICO_DRY_RUN_HOST="$pico_host" PICO_DRY_RUN_PORT=9001 \
+      DRY_RUN_ROBOT_X="$dry_x" DRY_RUN_ROBOT_Y="$dry_y" DRY_RUN_ROBOT_YAW="$dry_yaw" \
+      SPAWN_DOCK=false "${compose[@]}" up -d --build --force-recreate
+    echo 'Real-camera dry-run started: control_enabled=false, calibration_ready=false.'
+    echo 'Only /nav/cmd_vel_unstamped may carry calculated non-zero commands.'
+    echo 'Publish a fresh map-frame pose on /robot/pose_dry_run before testing.'
+    if [ -n "$pico_host" ]; then
+      echo "Pico log-only bridge enabled at ${pico_host}:9001."
+    fi
+    ;;
+  real-camera-aruco-dry-run-up)
+    if [ "$#" -ne 1 ]; then
+      echo "Usage: $0 real-camera-aruco-dry-run-up" >&2
+      exit 2
+    fi
+    if ! colima -p create3 status >/dev/null 2>&1; then
+      colima start create3 --cpu 4 --memory 6 --disk 24 --vm-type vz \
+        --mount none --activate=false --ssh-config=false
+    fi
+    SIM_WORLD=room \
+      VISION_CONTROLLER_CONFIG=/etc/vision-controller.real-aruco-dry-run.yaml \
+      PICO_DRY_RUN_HOST="" SPAWN_DOCK=false \
+      "${compose[@]}" up -d --build --force-recreate
+    "${compose[@]}" exec -T simulator supervisorctl start aruco-pose >/dev/null
+    echo 'Live-ArUco real-camera dry-run started.'
+    echo 'Physical output remains disabled; only /roomba/cmd_vel_dry_run is published.'
+    echo 'TCP 9000/9001 and the fixed dry-run pose publisher are not used.'
+    ;;
   nav-test-up)
     if colima -p create3 status >/dev/null 2>&1; then
       "${compose[@]}" down
@@ -87,9 +129,53 @@ case "${1:-help}" in
         ;;
       *) echo "Usage: $0 cmd-adapter [dry_run|gazebo|roomba] [INPUT_TOPIC]" >&2; exit 2 ;;
     esac
+    if [ "$mode" = dry_run ] && [ "$input_topic" = /nav/cmd_vel_unstamped ]; then
+      "${compose[@]}" exec -T simulator supervisorctl restart cmd-vel-output-adapter >/dev/null 2>&1 || \
+        "${compose[@]}" exec -T simulator supervisorctl start cmd-vel-output-adapter
+      "${compose[@]}" exec -T simulator supervisorctl status cmd-vel-output-adapter
+      exit 0
+    fi
     "${compose[@]}" exec simulator bash -lc \
       'source /opt/create3_ws/install/setup.bash; exec /usr/local/bin/cmd-vel-output-adapter --ros-args --params-file /etc/cmd-vel-output-adapter.yaml -p mode:="$1" -p input_topic:="$2"' \
       _ "$mode" "$input_topic"
+    ;;
+  pico-cmd-dry-run)
+    if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
+      echo "Usage: $0 pico-cmd-dry-run PICO_IP [PORT]" >&2
+      exit 2
+    fi
+    host="$2"
+    port="${3:-9001}"
+    "${compose[@]}" exec simulator bash -lc \
+      'source /opt/create3_ws/install/setup.bash; exec /usr/local/bin/pico-dry-run-bridge --ros-args -p network_enabled:=true -p host:="$1" -p port:="$2" -p command_topic:=/roomba/cmd_vel_dry_run' \
+      _ "$host" "$port"
+    ;;
+  e2e-record)
+    if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
+      echo "Usage: $0 e2e-record {A|B|C|D|E} [SECONDS]" >&2
+      exit 2
+    fi
+    scenario="$2"
+    seconds="${3:-15}"
+    case "$scenario" in A|B|C|D|E) ;; *) echo "Scenario must be A, B, C, D, or E" >&2; exit 2 ;; esac
+    container_output="/tmp/e2e-${scenario}.json"
+    "${compose[@]}" exec -T simulator bash -lc \
+      'source /opt/create3_ws/install/setup.bash; exec /usr/local/bin/e2e-dry-run-recorder "$1" --seconds "$2" --output "$3"' \
+      _ "$scenario" "$seconds" "$container_output"
+    artifact_dir="../artifacts/e2e_real_camera_pico_dry_run"
+    mkdir -p "$artifact_dir"
+    "${compose[@]}" cp "simulator:${container_output}" "$artifact_dir/result-${scenario}.json"
+    "${compose[@]}" logs --no-color simulator > "$artifact_dir/ros2.log"
+    echo "Saved $artifact_dir/result-${scenario}.json and ros2.log"
+    ;;
+  dry-run-pose)
+    if [ "$#" -ne 4 ]; then
+      echo "Usage: $0 dry-run-pose X_METRES Y_METRES YAW_RADIANS" >&2
+      exit 2
+    fi
+    "${compose[@]}" exec simulator bash -lc \
+      'source /opt/create3_ws/install/setup.bash; exec /usr/local/bin/dry-run-pose-publisher "$1" "$2" "$3"' \
+      _ "$2" "$3" "$4"
     ;;
   camera-status)
     "${compose[@]}" exec -T simulator bash -lc '
@@ -162,6 +248,17 @@ case "${1:-help}" in
       'source /opt/create3_ws/install/setup.bash; exec /usr/local/bin/roomba-bridge-tcp --ros-args -p host:="$1" -p port:="$2" -p drive_enabled:=false -p diagnostic_on_connect:=true -p watchdog_test_mode:=false -p command_topic:=/roomba/cmd_vel_unstamped' \
       -- "$host" "$port"
     ;;
+  roomba-short-e-bridge)
+    if [ "$#" -lt 3 ] || [ "$#" -gt 4 ] || [ "$3" != "WHEELS_LIFTED" ]; then
+      echo "Usage: $0 roomba-short-e-bridge PICO_IP WHEELS_LIFTED [PORT]" >&2
+      exit 2
+    fi
+    host="$2"
+    port="${4:-9000}"
+    "${compose[@]}" exec simulator bash -lc \
+      'source /opt/create3_ws/install/setup.bash; exec /usr/local/bin/roomba-bridge-tcp --ros-args -p host:="$1" -p port:="$2" -p drive_enabled:=true -p diagnostic_on_connect:=true -p watchdog_test_mode:=false -p max_speed_mm_s:=20 -p command_timeout:=0.5 -p max_drive_session_duration:=0.4 -p command_topic:=/roomba/cmd_vel_unstamped' \
+      -- "$host" "$port"
+    ;;
   roomba-tcp-watchdog)
     if [ "$#" -lt 3 ] || [ "$#" -gt 4 ] || [ "$3" != "WHEELS_LIFTED" ]; then
       echo "Usage: $0 roomba-tcp-watchdog PICO_IP WHEELS_LIFTED [PORT]" >&2
@@ -202,6 +299,34 @@ case "${1:-help}" in
         -- "$mode"
     fi
     ;;
+  aruco-pose)
+    "${compose[@]}" exec simulator bash -lc \
+      'source /opt/create3_ws/install/setup.bash; exec /usr/local/bin/aruco-pose-publisher --ros-args --params-file /etc/aruco-pose.yaml'
+    ;;
+  aruco-pose-start)
+    "${compose[@]}" exec -T simulator supervisorctl start aruco-pose >/dev/null
+    "${compose[@]}" exec -T simulator supervisorctl status aruco-pose
+    ;;
+  aruco-pose-stop)
+    "${compose[@]}" exec -T simulator supervisorctl stop aruco-pose >/dev/null
+    "${compose[@]}" exec -T simulator supervisorctl status aruco-pose || true
+    ;;
+  localization-wheel-preview)
+    "${compose[@]}" exec simulator bash -lc \
+      'source /opt/create3_ws/install/setup.bash; exec /usr/local/bin/wheel-odometry-node --ros-args --params-file /etc/localization-preview.yaml'
+    ;;
+  localization-fusion-preview)
+    "${compose[@]}" exec simulator bash -lc \
+      'source /opt/create3_ws/install/setup.bash; exec /usr/local/bin/localization-fusion-node --ros-args --params-file /etc/localization-preview.yaml'
+    ;;
+  localization-preview-test)
+    "${compose[@]}" exec -T simulator bash -lc \
+      'source /opt/create3_ws/install/setup.bash; exec /usr/local/bin/localization-preview-test --ros-args --params-file /etc/localization-preview.yaml'
+    ;;
+  localization-hardware-live)
+    echo 'Refusing hardware-live localization: UART/TCP 9000 is intentionally not implemented in this phase.' >&2
+    exit 1
+    ;;
   test-marker)
     "${compose[@]}" exec simulator bash -lc \
       'source /opt/create3_ws/install/setup.bash; ros2 topic pub -r 2 /litter/target_marker visualization_msgs/msg/Marker "{header: {frame_id: odom}, ns: known_floor_test, id: 99, type: 2, action: 0, pose: {position: {x: 1.5, y: 0.0, z: 0.05}, orientation: {w: 1.0}}, scale: {x: 0.2, y: 0.2, z: 0.2}, color: {r: 0.0, g: 1.0, b: 0.0, a: 1.0}}"'
@@ -231,6 +356,45 @@ case "${1:-help}" in
       exit 1
     '
     echo 'Gazebo and RViz arranged for a 1280x800 recording.'
+    ;;
+  replay-create3-trajectory)
+    trajectory_file="${2:-../artifacts/submission/pai_create3_20261015T163837JST/result.json}"
+    replay_speed="${3:-10}"
+    if [ "$#" -gt 3 ] || [ ! -f "$trajectory_file" ]; then
+      echo "Usage: $0 replay-create3-trajectory [RESULT_JSON [SPEED]]" >&2
+      exit 2
+    fi
+    if ! "${compose[@]}" exec -T simulator bash -lc '[ "$SIM_WORLD" = room_camera ]'; then
+      echo 'Trajectory replay requires: ./simulation/sim.sh vision-integration-up' >&2
+      exit 1
+    fi
+    "${compose[@]}" cp "$trajectory_file" simulator:/tmp/create3-trajectory-result.json
+    "${compose[@]}" cp replay_create3_trajectory.py simulator:/tmp/replay-create3-trajectory.py
+    "${compose[@]}" exec -T simulator bash -lc '
+      set -e
+      source /opt/create3_ws/install/setup.bash
+      if ros2 topic list | grep -qx /roomba/cmd_vel_unstamped; then
+        echo "Refusing replay: physical Roomba command topic exists" >&2
+        exit 1
+      fi
+      ros2 param set /vision_turn_controller control_enabled false >/dev/null
+      ros2 param set /vision_turn_controller calibration_ready false >/dev/null
+      ros2 topic pub --once /cmd_vel_unstamped geometry_msgs/msg/Twist "{}" >/dev/null
+      visualizer_was_running=false
+      if supervisorctl status presentation-visualizer | grep -q RUNNING; then
+        supervisorctl stop presentation-visualizer >/dev/null
+        visualizer_was_running=true
+      fi
+      cleanup_replay() {
+        ros2 topic pub --once /cmd_vel_unstamped geometry_msgs/msg/Twist "{}" >/dev/null 2>&1 || true
+        if [ "$visualizer_was_running" = true ]; then
+          supervisorctl start presentation-visualizer >/dev/null 2>&1 || true
+        fi
+      }
+      trap cleanup_replay EXIT
+      python3 /tmp/replay-create3-trajectory.py \
+        /tmp/create3-trajectory-result.json --world room_camera --speed "$1" --fps 5
+    ' -- "$replay_speed"
     ;;
   ros-status)
     "${compose[@]}" exec simulator bash -lc '
@@ -415,6 +579,6 @@ case "${1:-help}" in
     "${compose[@]}" cp simulator:/tmp/oscillation_summary.json ../artifacts/oscillation_diagnostics/summary.json
     ;;
   *)
-    echo "Usage: $0 {up|camera-up|vision-integration-up|nav-test-up|down|stop|shell|status|cmd-adapter [dry_run|gazebo|roomba] [INPUT_TOPIC]|camera-status|litter-add X Y|litter-move X Y|litter-remove|logs|teleop|roomba-tcp PICO_IP [PORT]|roomba-tcp-diagnostic PICO_IP [PORT]|roomba-tcp-watchdog PICO_IP WHEELS_LIFTED [PORT]|roomba-wheel-lift-test MODE [WHEELS_LIFTED]|test-marker|record-status|presentation-layout|ros-status|control-turn|control-approach|control-off|known-target-test|known-target-abort-test|multi-target-test|synthetic-coordinate-test|yolo-navigation-test|oscillation-diagnostics [SECONDS]}"
+    echo "Usage: $0 {up|camera-up|vision-integration-up|real-camera-dry-run-up [PICO_IP [X Y YAW]]|real-camera-aruco-dry-run-up|nav-test-up|down|stop|shell|status|cmd-adapter [dry_run|gazebo|roomba] [INPUT_TOPIC]|pico-cmd-dry-run PICO_IP [PORT]|e2e-record {A|B|C|D|E} [SECONDS]|dry-run-pose X Y YAW|camera-status|litter-add X Y|litter-move X Y|litter-remove|logs|teleop|roomba-tcp PICO_IP [PORT]|roomba-tcp-diagnostic PICO_IP [PORT]|roomba-short-e-bridge PICO_IP WHEELS_LIFTED [PORT]|roomba-tcp-watchdog PICO_IP WHEELS_LIFTED [PORT]|roomba-wheel-lift-test MODE [WHEELS_LIFTED]|aruco-pose|aruco-pose-start|aruco-pose-stop|localization-wheel-preview|localization-fusion-preview|localization-preview-test|localization-hardware-live|test-marker|record-status|presentation-layout|replay-create3-trajectory [RESULT_JSON [SPEED]]|ros-status|control-turn|control-approach|control-off|known-target-test|known-target-abort-test|multi-target-test|synthetic-coordinate-test|yolo-navigation-test|oscillation-diagnostics [SECONDS]}"
     ;;
 esac

@@ -1,5 +1,6 @@
 """ROS-independent TCP transport for a Pico W Roomba OI relay."""
 
+import math
 import socket
 import struct
 import time
@@ -133,6 +134,68 @@ class CommandState:
             self.clear()
             return None
         return self.command
+
+
+class DriveSessionLimiter:
+    """One-shot monotonic deadline for explicitly bounded hardware tests.
+
+    A zero limit disables the limiter for existing launch paths.  Once an
+    enabled session expires or is stopped, another non-zero command is
+    rejected until a new explicit ARM resets the limiter.
+    """
+
+    MAX_DURATION_S = 1.0
+
+    def __init__(self, duration_s=0.0, clock=None):
+        if (
+            not isinstance(duration_s, (int, float))
+            or isinstance(duration_s, bool)
+            or not math.isfinite(duration_s)
+            or duration_s < 0.0
+            or duration_s > self.MAX_DURATION_S
+        ):
+            raise ValueError("drive session duration must be 0 or <= 1.0 seconds")
+        self.duration_s = float(duration_s)
+        self.clock = clock or time.monotonic
+        self.started_at = None
+        self.latched = False
+
+    @property
+    def enabled(self):
+        return self.duration_s > 0.0
+
+    def arm(self):
+        self.started_at = None
+        self.latched = False
+
+    def observe_nonzero(self):
+        if not self.enabled:
+            return "allowed"
+        if self.latched:
+            return "latched"
+        now = self.clock()
+        if self.started_at is None:
+            self.started_at = now
+            return "started"
+        if now - self.started_at >= self.duration_s:
+            self.latched = True
+            return "expired"
+        return "allowed"
+
+    def poll(self):
+        if (
+            not self.enabled
+            or self.latched
+            or self.started_at is None
+            or self.clock() - self.started_at < self.duration_s
+        ):
+            return False
+        self.latched = True
+        return True
+
+    def latch_stop(self):
+        if self.enabled and self.started_at is not None:
+            self.latched = True
 
 
 class WatchdogTestCommandState:

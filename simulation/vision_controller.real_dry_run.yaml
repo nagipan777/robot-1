@@ -1,0 +1,52 @@
+vision_turn_controller:
+  ros__parameters:
+    # Log-only E2E mode. Physical-control safety flags deliberately stay false.
+    use_sim_time: false
+    control_enabled: false
+    calibration_ready: false
+    dry_run_enabled: true
+
+    pose_source: pose_stamped
+    pose_topic: /robot/pose_dry_run
+    detections_topic: /webcam/detections
+    cmd_vel_topic: /cmd_vel_unstamped
+    dry_run_cmd_vel_topic: /nav/cmd_vel_unstamped
+    target_label: litter
+
+    # The measured homography already maps 1280x960 pixels into the floor map.
+    detection_target_frame: map
+    detection_target_topic: /litter/target_candidate
+    target_frame: map
+    candidate_target_topic: /litter/target_candidate
+    target_topic: /litter/target
+    decision_topic: /litter/target_decision
+    require_detection_metadata: true
+    target_marker_topic: /litter/target_marker
+    reached_topic: /litter/reached
+
+    image_to_odom_homography: [2.271875105e-05, -0.002563034829, 2.924257728, -0.00167332933, 2.362981057e-05, 1.038104632, 3.022370992e-05, 2.631257443e-05, 1.0]
+    calibration_image_width: 1280
+    calibration_image_height: 960
+    max_detection_age: 1.0
+    # Retrained-mask observations are about 0.60-0.74; Roomba-only false hit was 0.2055.
+    min_detection_confidence: 0.50
+    # Reject isolated background hits before they become navigation targets.
+    target_confirmation_count: 3
+    target_confirmation_distance: 0.20
+    input_timeout: 1.0
+    robot_guard_radius: 0.5
+    max_robot_pose_age: 1.0
+
+    # Exercise the same arrival/dropout latch intended for physical control.
+    # Repeated detections within 0.20 m remain the same target.
+    safe_target_management_enabled: true
+    target_change_distance: 0.20
+    control_mode: approach
+    angular_gain: 1.2
+    max_angular_speed: 0.8
+    angle_tolerance: 0.08
+    arrival_distance: 0.15
+    arrival_epsilon: 0.0
+    linear_gain: 0.4
+    max_linear_speed: 0.08
+    forward_angle_tolerance: 0.15

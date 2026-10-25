@@ -52,6 +52,45 @@ def format_robot_proximity_log(frame, target, confidence, distance, timestamp):
     )
 
 
+class SpatialConfirmationFilter:
+    """Require consecutive detections in one spatial cluster before accepting."""
+
+    def __init__(self):
+        self.reference_target = None
+        self.count = 0
+        self.confirmed = False
+
+    def consider(self, target, required_count, max_distance):
+        required_count = int(required_count)
+        max_distance = float(max_distance)
+        if required_count < 1:
+            raise ValueError("target_confirmation_count must be at least 1")
+        if max_distance < 0.0 or not math.isfinite(max_distance):
+            raise ValueError(
+                "target_confirmation_distance must be finite and non-negative"
+            )
+
+        target = (float(target[0]), float(target[1]))
+        if self.reference_target is None or math.hypot(
+            target[0] - self.reference_target[0],
+            target[1] - self.reference_target[1],
+        ) > max_distance:
+            self.reference_target = target
+            self.count = 1
+            self.confirmed = required_count == 1
+            return self.confirmed
+
+        if not self.confirmed:
+            self.count += 1
+            self.confirmed = self.count >= required_count
+        return self.confirmed
+
+    def reset(self):
+        self.reference_target = None
+        self.count = 0
+        self.confirmed = False
+
+
 class SafeTargetManager:
     """Keep a stable target identity across detector jitter and dropouts."""
 

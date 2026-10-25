@@ -16,6 +16,7 @@ from visualization_msgs.msg import Marker
 
 from target_manager import (
     SafeTargetManager,
+    SpatialConfirmationFilter,
     evaluate_robot_guard,
     format_robot_proximity_log,
     require_fresh_timestamp,
@@ -89,6 +90,8 @@ class VisionTurnController(Node):
         self.declare_parameter("safe_target_management_enabled", False)
         self.declare_parameter("target_change_distance", 0.0)
         self.declare_parameter("min_detection_confidence", 0.0)
+        self.declare_parameter("target_confirmation_count", 1)
+        self.declare_parameter("target_confirmation_distance", 0.0)
         self.declare_parameter("control_mode", "turn_only")
         self.declare_parameter("linear_gain", 0.4)
         self.declare_parameter("max_linear_speed", 0.08)
@@ -110,7 +113,8 @@ class VisionTurnController(Node):
         self.output_active = False
         self.target_reached = False
         self.target_manager = SafeTargetManager()
-        self.pending_detection_metadata = None
+        self.target_confirmation = SpatialConfirmationFilter()
+        self.pending_detection_metadata = {}
 
         detections_topic = self.get_parameter("detections_topic").value
         cmd_vel_topic = self.get_parameter("cmd_vel_topic").value
@@ -121,12 +125,16 @@ class VisionTurnController(Node):
         pose_topic = self.get_parameter("pose_topic").value
 
         self.create_subscription(String, detections_topic, self.on_detections, 10)
-        self.create_subscription(
-            PointStamped,
-            self.get_parameter("candidate_target_topic").value,
-            self.on_target,
-            10,
-        )
+        detection_target_topic = self.get_parameter("detection_target_topic").value
+        candidate_target_topic = self.get_parameter("candidate_target_topic").value
+        self.direct_candidate_processing = detection_target_topic == candidate_target_topic
+        if not self.direct_candidate_processing:
+            self.create_subscription(
+                PointStamped,
+                candidate_target_topic,
+                self.on_target,
+                10,
+            )
         if pose_source == "odom":
             self.create_subscription(Odometry, pose_topic, self.on_odom, 10)
         elif pose_source == "pose_stamped":
@@ -222,9 +230,9 @@ class VisionTurnController(Node):
             self.get_logger().warning("Ignoring non-finite target coordinates")
             self.publish_decision(False, "non_finite_target", message)
             return
-        metadata = self.pending_detection_metadata
         stamp_key = (message.header.stamp.sec, message.header.stamp.nanosec)
-        metadata_matches = metadata is not None and metadata["stamp_key"] == stamp_key
+        metadata = self.pending_detection_metadata.pop(stamp_key, None)
+        metadata_matches = metadata is not None
         if self.get_parameter("require_detection_metadata").value and not metadata_matches:
             self.lose_detection()
             self.get_logger().warning("Detection rejected: reason=missing_detection_metadata")
@@ -374,8 +382,16 @@ class VisionTurnController(Node):
                     )
                     self.warned_not_ready = True
                 return
-            self.target_pixel = (float(best["center_x"]), float(best["center_y"]))
-            self.target_odom = transform_point(homography, *self.target_pixel)
+            candidate_pixel = (float(best["center_x"]), float(best["center_y"]))
+            candidate_target = transform_point(homography, *candidate_pixel)
+            if not self.target_confirmation.consider(
+                candidate_target,
+                self.get_parameter("target_confirmation_count").value,
+                self.get_parameter("target_confirmation_distance").value,
+            ):
+                return
+            self.target_pixel = candidate_pixel
+            self.target_odom = candidate_target
             self.detection_received_at = time.monotonic()
             detection_timestamp = float(payload.get("timestamp", time.time()))
             if not math.isfinite(detection_timestamp):
@@ -397,12 +413,17 @@ class VisionTurnController(Node):
         point.header.frame_id = frame
         point.point.x = target_x
         point.point.y = target_y
-        self.pending_detection_metadata = {
-            "stamp_key": (stamp.sec, stamp.nanosec),
+        stamp_key = (stamp.sec, stamp.nanosec)
+        self.pending_detection_metadata[stamp_key] = {
             "confidence": confidence,
             "timestamp": detection_timestamp,
         }
+        while len(self.pending_detection_metadata) > 32:
+            oldest = next(iter(self.pending_detection_metadata))
+            del self.pending_detection_metadata[oldest]
         self.target_publisher.publish(point)
+        if self.direct_candidate_processing:
+            self.on_target(point)
 
         now = time.monotonic()
         if now - self.last_target_log_at >= 1.0:
@@ -437,7 +458,7 @@ class VisionTurnController(Node):
         self.control_target = None
         self.target_reached = False
         self.target_received_at = 0.0
-        self.pending_detection_metadata = None
+        self.pending_detection_metadata.clear()
         if not preserve_safe_state:
             self.target_manager.reset()
         if self.marker_visible:
@@ -451,11 +472,15 @@ class VisionTurnController(Node):
             self.marker_visible = False
 
     def lose_detection(self):
+        self.target_confirmation.reset()
         safe_management = self.get_parameter(
             "safe_target_management_enabled"
         ).value
         control_enabled = self.get_parameter("control_enabled").value
-        preserve_safe_state = safe_management and control_enabled
+        dry_run_enabled = self.get_parameter("dry_run_enabled").value
+        preserve_safe_state = safe_management and (
+            control_enabled or dry_run_enabled
+        )
         if preserve_safe_state:
             self.target_manager.suspend()
         self.clear_target(preserve_safe_state=preserve_safe_state)

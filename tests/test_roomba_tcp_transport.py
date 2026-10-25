@@ -5,6 +5,7 @@ import unittest
 
 from simulation.roomba_tcp_transport import (
     CommandState,
+    DriveSessionLimiter,
     DIAGNOSTIC_MAGIC,
     DIAGNOSTIC_OI_MODE,
     DIAGNOSTIC_OI_MODE_LIVE,
@@ -77,6 +78,56 @@ def ready_handler(connection, received):
 
 
 class RoombaTcpTransportTests(unittest.TestCase):
+    def test_bounded_drive_session_expires_and_requires_new_arm(self):
+        now = [10.0]
+        limiter = DriveSessionLimiter(0.4, lambda: now[0])
+        limiter.arm()
+        self.assertEqual(limiter.observe_nonzero(), "started")
+        now[0] += 0.399
+        self.assertEqual(limiter.observe_nonzero(), "allowed")
+        self.assertFalse(limiter.poll())
+        now[0] += 0.001
+        self.assertTrue(limiter.poll())
+        self.assertEqual(limiter.observe_nonzero(), "latched")
+
+        limiter.arm()
+        self.assertEqual(limiter.observe_nonzero(), "started")
+
+    def test_bounded_drive_session_rejects_late_callback_without_timer_poll(self):
+        now = [20.0]
+        limiter = DriveSessionLimiter(0.4, lambda: now[0])
+        limiter.arm()
+        self.assertEqual(limiter.observe_nonzero(), "started")
+
+        # Repeated Navigation messages do not refresh the fixed deadline.
+        now[0] += 0.2
+        self.assertEqual(limiter.observe_nonzero(), "allowed")
+        now[0] += 0.201
+        self.assertEqual(limiter.observe_nonzero(), "expired")
+        self.assertEqual(limiter.observe_nonzero(), "latched")
+
+    def test_bounded_drive_stop_latches_and_invalid_limits_are_rejected(self):
+        now = [1.0]
+        limiter = DriveSessionLimiter(1.0, lambda: now[0])
+        limiter.arm()
+        self.assertEqual(limiter.observe_nonzero(), "started")
+        limiter.latch_stop()
+        self.assertEqual(limiter.observe_nonzero(), "latched")
+
+        for duration in (-0.001, 1.001, float("nan"), True):
+            with self.subTest(duration=duration):
+                with self.assertRaises(ValueError):
+                    DriveSessionLimiter(duration)
+
+    def test_disabled_drive_session_limiter_preserves_existing_paths(self):
+        now = [1.0]
+        limiter = DriveSessionLimiter(0.0, lambda: now[0])
+        limiter.arm()
+        self.assertEqual(limiter.observe_nonzero(), "allowed")
+        now[0] += 100.0
+        self.assertEqual(limiter.observe_nonzero(), "allowed")
+        self.assertFalse(limiter.poll())
+
     def test_safe_gate_requires_complete_stop_ack_and_safe_mode(self):
         gate = SafeModeGate()
         self.assertTrue(gate.permits(0.0, 0.0))

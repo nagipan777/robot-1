@@ -2,6 +2,7 @@ import unittest
 
 from simulation.target_manager import (
     SafeTargetManager,
+    SpatialConfirmationFilter,
     evaluate_robot_guard,
     format_robot_proximity_log,
     require_fresh_timestamp,
@@ -88,6 +89,39 @@ class SafeTargetManagerTests(unittest.TestCase):
         self.assertEqual(require_fresh_timestamp(99.5, 100.0, 1.0), 99.5)
         with self.assertRaisesRegex(ValueError, "stale detection"):
             require_fresh_timestamp(98.0, 100.0, 1.0)
+
+
+class SpatialConfirmationFilterTests(unittest.TestCase):
+    def setUp(self):
+        self.filter = SpatialConfirmationFilter()
+
+    def test_requires_three_nearby_detections(self):
+        self.assertFalse(self.filter.consider((2.00, -0.38), 3, 0.20))
+        self.assertFalse(self.filter.consider((2.02, -0.37), 3, 0.20))
+        self.assertTrue(self.filter.consider((1.99, -0.39), 3, 0.20))
+        self.assertTrue(self.filter.consider((2.01, -0.38), 3, 0.20))
+
+    def test_distant_detection_restarts_confirmation(self):
+        self.assertFalse(self.filter.consider((2.00, -0.38), 3, 0.20))
+        self.assertFalse(self.filter.consider((2.02, -0.37), 3, 0.20))
+        self.assertFalse(self.filter.consider((1.20, 0.70), 3, 0.20))
+        self.assertEqual(self.filter.count, 1)
+
+    def test_reset_discards_partial_confirmation(self):
+        self.filter.consider((2.00, -0.38), 3, 0.20)
+        self.filter.consider((2.02, -0.37), 3, 0.20)
+        self.filter.reset()
+        self.assertFalse(self.filter.consider((2.01, -0.39), 3, 0.20))
+        self.assertEqual(self.filter.count, 1)
+
+    def test_default_single_detection_preserves_existing_behavior(self):
+        self.assertTrue(self.filter.consider((1.0, 2.0), 1, 0.0))
+
+    def test_invalid_settings_are_rejected(self):
+        with self.assertRaises(ValueError):
+            self.filter.consider((1.0, 2.0), 0, 0.20)
+        with self.assertRaises(ValueError):
+            self.filter.consider((1.0, 2.0), 3, -0.01)
 
 
 if __name__ == "__main__":
