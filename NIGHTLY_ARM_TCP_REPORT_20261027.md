@@ -2,13 +2,16 @@
 
 ## A. Conclusion
 
-**Partial improvement.** The `0/7` ARM ACK loss has a confirmed software cause:
+**Locked non-driving Pico path repaired and reproduced.** The `0/7` ARM ACK loss
+has a confirmed software cause:
 the Pico non-blocking `send()` returning `None` was treated as a complete write.
 The fix is reproduced and passes host-side tests. ACK/session state is now bound
 to a connection ID and commits only after all seven bytes are written.
 
-This is not yet “resolved on real Pico.” The reviewed code has not been deployed
-and measured against the actual Pico after the final instrumentation changes.
+The reviewed code was deployed to the actual Pico on 2026-10-27 with both motion
+locks false and the Roomba physically disconnected. The locked ten-cycle probe
+then passed 10/10. Accepted-ARM and Roomba STOP/OI diagnostics remain separate
+attended gates and were not inferred from this result.
 
 ## B. Communication comparison
 
@@ -58,7 +61,9 @@ are unperformed.
 - Additional stress: Mac and Colima each passed 5,000/5,000 normal connections;
   each 400-cycle fault matrix classified 200 complete, 100 timeout, and 100
   partial-close cases without invariant violations.
-- Real Pico non-driving TCP: **not run**.
+- Real Pico locked non-driving TCP after deployment: **10/10 PASS**; READY,
+  complete seven-byte lock-rejection ACK, and subsequent READY were each 10/10,
+  with zero timeout and zero partial receive.
 - Real Roomba UART/STOP ACK: **not run**; Mini-DIN was reported disconnected.
 - Full discovery on Mac collected 292 tests: 281 passed; eight import errors
   require NumPy/OpenCV and three errors came from ambiguous top-level discovery.
@@ -76,9 +81,13 @@ are unperformed.
 - Mock non-zero values exist only inside isolated unit tests.
 - No ROS bridge, output adapter, Gazebo, or test client process was observed;
   Colima and an interactive container shell remained running.
-- Final code on the physical Pico: **unconfirmed/not deployed unattended**.
-- Physical Mini-DIN/BRC/power state: based on the last operator report only;
-  not independently observable by Codex.
+- Final code on the physical Pico: deployed and normalized-hash verified. After
+  replacing only the local credential values with empty strings, the deployed
+  file and `pico/main.py` both hashed to
+  `375482434f47fcf8669e814b8a9dd685753d1039cf733b8d9b7e2a2ec46d0ff3`.
+- Pico and ROS non-zero locks remained false. No Drive frame was sent.
+- Roomba/Mini-DIN was operator-confirmed disconnected, so STOP ACK and OI mode
+  were intentionally not tested.
 
 ## F. GitHub
 
@@ -104,18 +113,43 @@ ARM request, or Drive command was used in this recheck.
 
 ## G. Remaining issues (maximum three)
 
-1. Final code has not been deployed to or measured against the real Pico.
-2. Mac-versus-container port-9000 Wi-Fi results, RSSI, firmware, ping loss,
-   reset/memory evidence, and real reconnect rate remain unmeasured.
-3. Generation state is RAM-only across Pico reboot. The host epoch-based
+1. Accepted-ARM ACK is not yet measured on real Pico; doing so requires a
+   separately controlled temporary lock enable and does not authorize Drive.
+2. Roomba STOP ACK `0x07`, requested wheels zero, and Safe mode 2 were not
+   available while Roomba/Mini-DIN was disconnected.
+3. Generation state remains RAM-only across Pico reboot. The host epoch-based
    generation makes accidental reuse unlikely, but reboot collision behavior
    still requires a documented live test; no protocol persistence was added.
 
 ## H. First attended operation
 
-**NO-GO for Mini-DIN reconnection or Short-E movement.** First keep Mini-DIN
-and BRC disconnected, then visually confirm the Pico editor still shows
-`ALLOW_NONZERO_DRIVE = False`. After that single confirmation, deploy the
-reviewed code and run the 10-cycle locked non-driving probe. The communication
-gate clears only after its JSON and Pico event log show 10/10 complete ACKs and
-10/10 subsequent READY connections with no unexplained reset.
+**Still NO-GO for Short-E movement.** The locked communication gate is now
+10/10 PASS, but accepted-ARM ACK and the Roomba STOP/Safe gates remain pending.
+Do not infer a movement GO from the Pico-only result.
+
+## I. Real-Pico chronology and measurements
+
+The first live run exposed a diagnostic-tool defect: lock rejection correctly
+returned `d7 84 02 00000000`, but the probe incorrectly expected the requested
+generation to be echoed. A lock rejection must not reserve that generation.
+The probe now validates status `0x02` and records the unchanged highest accepted
+generation separately.
+
+Before final deployment, the old Pico file was 21,179 bytes with SHA256
+`1a37c7789f16f8dffa9d42280bacf5b9ac5c3af0efddf497831b05e92ec4236b`.
+It did not match the reviewed 28,230-byte repository file. With the corrected
+probe, the old deployment passed 7/10 immediate reconnect cycles. A 250 ms
+settled comparison passed only 5/10. All received ARM replies were complete;
+failures were zero-byte READY timeouts.
+
+During that failure window, a 30-packet ping returned 13 replies (56.7% loss),
+with 4.063/86.974/461.440 ms min/mean/max RTT. USB diagnostics reported
+MicroPython 1.29.0, RSSI -82 dBm, and 173,536 bytes free heap. This demonstrates
+that weak Wi-Fi was also present; it does not negate the confirmed old-code
+mismatch.
+
+After backing up the old file, preserving credentials only on the Pico,
+deploying the reviewed file, and soft-resetting, the same immediate ten-cycle
+probe passed 10/10. Mean/max ARM ACK latency was 96.8/274.5 ms; mean/max initial
+READY was 1.232/1.457 s; mean/max subsequent READY was 1.274/1.710 s. No timeout,
+partial ACK, Drive frame, or non-zero wheel command occurred.

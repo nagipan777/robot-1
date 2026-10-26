@@ -48,7 +48,7 @@ class ArmAckLockProbeTests(unittest.TestCase):
     def test_locked_ack_and_reconnect_pass_without_drive(self):
         generation = 100
         ack = probe.ARM_RESPONSE_PREFIX + bytes([probe.ARM_REJECTED_LOCK])
-        ack += struct.pack(">I", generation)
+        ack += struct.pack(">I", 0)
         first = FakeSocket(probe.READY + ack)
         second = FakeSocket(probe.READY)
 
@@ -60,6 +60,7 @@ class ArmAckLockProbeTests(unittest.TestCase):
             )
 
         self.assertTrue(result["pass"])
+        self.assertEqual(result["highest_generation"], 0)
         self.assertTrue(result["reconnect_ready"])
         self.assertTrue(first.closed)
         self.assertTrue(second.closed)

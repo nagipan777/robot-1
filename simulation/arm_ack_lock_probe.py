@@ -70,7 +70,14 @@ def close_with_stop(connection):
     connection.close()
 
 
-def run_cycle(host, port, timeout, generation, cycle_id=None):
+def run_cycle(
+    host,
+    port,
+    timeout,
+    generation,
+    cycle_id=None,
+    reconnect_delay=0.0,
+):
     result = {
         "generation": generation,
         "connection_id": cycle_id,
@@ -92,7 +99,10 @@ def run_cycle(host, port, timeout, generation, cycle_id=None):
         expected = ARM_RESPONSE_PREFIX + bytes([ARM_REJECTED_LOCK])
         highest = struct.unpack(">I", response[3:])[0]
         result["highest_generation"] = highest
-        if response[:3] != expected or highest != generation:
+        # A lock rejection must not reserve/burn the requested generation.
+        # The trailing value is therefore the latch's previously accepted
+        # generation (zero on a fresh boot), not an echo of this request.
+        if response[:3] != expected:
             raise RuntimeError("unexpected ARM response: {}".format(response.hex()))
         result["arm_rejected_lock"] = True
         close_with_stop(first)
@@ -108,6 +118,8 @@ def run_cycle(host, port, timeout, generation, cycle_id=None):
 
     # Recovery is measured even when READY or ARM ACK failed. It is a new TCP
     # session and still sends only the legacy zero STOP after READY.
+    if reconnect_delay > 0:
+        time.sleep(reconnect_delay)
     try:
         second, result["reconnect_ready_s"] = connect_ready(host, port, timeout)
         result["reconnect_ready"] = True
@@ -140,12 +152,16 @@ def main():
     parser.add_argument("--port", type=int, default=9000)
     parser.add_argument("--count", type=int, default=10)
     parser.add_argument("--timeout", type=float, default=2.0)
+    parser.add_argument("--reconnect-delay", type=float, default=0.0)
+    parser.add_argument("--cycle-delay", type=float, default=0.0)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     if args.count < 1:
         parser.error("--count must be at least 1")
     if args.timeout <= 0:
         parser.error("--timeout must be positive")
+    if args.reconnect_delay < 0 or args.cycle_delay < 0:
+        parser.error("delays must not be negative")
 
     base_generation = int(time.time()) & 0xFFFFFFFF
     results = []
@@ -156,6 +172,7 @@ def main():
             args.timeout,
             base_generation + index,
             cycle_id=index + 1,
+            reconnect_delay=args.reconnect_delay,
         )
         results.append(result)
         print(
@@ -169,6 +186,8 @@ def main():
                 result["error"],
             )
         )
+        if args.cycle_delay > 0 and index + 1 < args.count:
+            time.sleep(args.cycle_delay)
 
     ready_times = [item["ready_s"] for item in results if "ready_s" in item]
     ack_times = [item["arm_ack_s"] for item in results if "arm_ack_s" in item]
@@ -185,6 +204,8 @@ def main():
         "host": args.host,
         "port": args.port,
         "count": args.count,
+        "reconnect_delay_s": args.reconnect_delay,
+        "cycle_delay_s": args.cycle_delay,
         "passed": sum(item["pass"] for item in results),
         "ready_successes": sum(item["ready"] for item in results),
         "arm_ack_successes": sum(item["arm_rejected_lock"] for item in results),
