@@ -97,7 +97,7 @@ Automated non-driving result on 2026-10-26:
 
 - Python syntax compilation: PASS.
 - ARM/TCP and related safety suites after connection-ID instrumentation:
-  **99/99 PASS**.
+  **105/105 PASS**.
 - Covered: `send(None)` retry, partial ACK, finite send timeout, ACK failure
   STOP/latch, generation burn/replay rejection, STOP-during-ACK commit denial,
   no-first-Drive 500 ms expiry, host 0/7 timeout reporting, prior-generation
@@ -136,6 +136,19 @@ Short-E motion status remains **NO-GO** until all of the following are recorded:
 
 No actual-Pico test was run unattended because Pico/Roomba power and physical
 connections require the operator. No Short-E retry is authorized by this file.
+
+The probe attempts a fresh reconnect even after a READY or ARM ACK failure and
+records received byte count, failure reason, and READY/ACK/reconnect mean,
+maximum, and p95 latency. Correlate its JSON with the Pico console log using:
+
+```sh
+python3 simulation/correlate_arm_logs.py pico_console.log \
+  artifacts/short_e_wheel_lift/arm_ack_lock_10.json \
+  --output artifacts/short_e_wheel_lift/arm_ack_correlation.json
+```
+
+The correlator distinguishes no ARM receipt, pre-ACK termination, ACK send
+error, Pico send API success without host receipt, and correlated success.
 
 ## Mac-native versus Colima mock TCP measurements
 
@@ -204,3 +217,6 @@ JSON baselines:
 - At audit time macOS AC idle sleep was disabled, but low-power mode was on;
   battery idle sleep was one minute. Incident-time power/sleep history is not
   available, so sleep is not assigned as the root cause.
+- The reviewed Pico code emits a best-effort `WIFI_STATUS` event containing
+  MicroPython version, RSSI, and free heap. Unsupported fields are reported as
+  `unavailable`; SSID and password are never logged.

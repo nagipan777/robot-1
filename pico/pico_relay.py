@@ -1,9 +1,11 @@
 """Pico W: Wi-Fi (TCP) to Roomba 680 UART relay with fail-safe reconnects."""
 
 import errno
+import gc
 import machine
 import network
 import socket
+import sys
 import time
 
 
@@ -95,6 +97,22 @@ def log_event(event, **fields):
     for key in sorted(fields):
         parts.append("{}={}".format(key, fields[key]))
     print(" ".join(parts))
+
+
+def log_runtime_status():
+    try:
+        rssi = wlan.status("rssi")
+    except Exception:
+        rssi = "unavailable"
+    try:
+        memory_free = gc.mem_free()
+    except Exception:
+        memory_free = "unavailable"
+    try:
+        version = ".".join(str(value) for value in sys.implementation.version[:3])
+    except Exception:
+        version = "unavailable"
+    log_event("WIFI_STATUS", firmware=version, mem_free=memory_free, rssi=rssi)
 
 
 class MotionLatch:
@@ -214,6 +232,7 @@ def wifi_connect():
 
     if wlan.isconnected():
         print("Wi-Fi OK; IP:", wlan.ifconfig()[0])
+        log_runtime_status()
         led.on()
         return True
 
@@ -229,6 +248,7 @@ def wifi_connect():
         time.sleep_ms(250)
 
     print("Wi-Fi OK; IP:", wlan.ifconfig()[0])
+    log_runtime_status()
     led.on()
     return True
 

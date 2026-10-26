@@ -211,6 +211,23 @@ class PicoRelayProtocolTests(unittest.TestCase):
         self.assertEqual(relay.brc.transitions, [])
         self.assertFalse(relay.brc_wake_sent)
 
+    def test_runtime_status_is_best_effort_and_contains_no_credentials(self):
+        relay, _uart = load_relay()
+        output = io.StringIO()
+
+        with redirect_stdout(output):
+            relay.log_runtime_status()
+
+        logged = output.getvalue()
+        self.assertIn("WIFI_STATUS", logged)
+        self.assertIn("firmware=", logged)
+        self.assertIn("mem_free=", logged)
+        self.assertIn("rssi=", logged)
+        if relay.SSID:
+            self.assertNotIn(relay.SSID, logged)
+        if relay.PASSWORD:
+            self.assertNotIn(relay.PASSWORD, logged)
+
     def test_enabled_brc_wake_pulses_only_once_per_boot(self):
         relay, _uart = load_relay()
         relay.BRC_WAKE_ENABLED = True

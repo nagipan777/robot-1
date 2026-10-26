@@ -38,7 +38,10 @@ are unperformed.
 - `simulation/roomba_tcp_transport.py`: separate ARM send, receive, validation,
   and failure events; clear old authorization before every ARM attempt.
 - `simulation/arm_ack_lock_probe.py`: repeated real-Pico locked/non-driving
-  probe with JSON output (not yet run against real Pico).
+  probe with JSON output and a recovery attempt after failures (not yet run
+  against real Pico).
+- `simulation/correlate_arm_logs.py`: generation-based Pico/host correlation
+  and A/B/C/D failure classification.
 - `simulation/arm_tcp_mock_stress.py`: identical Mac/Colima mock stress and
   fault injection without any Drive frame.
 - Tests: partial ACK sizes 1–6, disconnect during ACK, STOP during ACK, old
@@ -48,7 +51,7 @@ are unperformed.
 ## D. Test results
 
 - Syntax checks: PASS.
-- Focused unit/host/mock regression: **99/99 PASS**.
+- Focused unit/host/mock regression: **105/105 PASS**.
 - Mac normal mock: **300/300 complete**.
 - Colima normal mock: **300/300 complete**.
 - Fault matrices: expected 25 timeout + 25 partial + 50 complete in each.
