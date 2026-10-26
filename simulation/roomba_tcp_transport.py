@@ -252,14 +252,20 @@ class RoombaTcpTransport:
         *,
         connect_timeout=2.0,
         socket_factory=socket.create_connection,
+        trace=None,
     ):
         self.host = host
         self.port = port
         self.connect_timeout = connect_timeout
         self.socket_factory = socket_factory
+        self.trace = trace
         self.socket = None
         self.armed_generation = None
         self.drive_sequence = 0
+
+    def _trace(self, stage, **fields):
+        if self.trace is not None:
+            self.trace(stage, **fields)
 
     @property
     def connected(self):
@@ -270,6 +276,8 @@ class RoombaTcpTransport:
         self.armed_generation = None
         self.drive_sequence = 0
         connection = None
+        started = time.monotonic()
+        self._trace("tcp_connect_start", host=self.host, port=self.port)
         try:
             connection = self.socket_factory(
                 (self.host, self.port), timeout=self.connect_timeout
@@ -283,7 +291,17 @@ class RoombaTcpTransport:
             connection.settimeout(2.0)
             self.socket = connection
             self.send_stop()
-        except Exception:
+            self._trace(
+                "tcp_ready_received",
+                bytes=len(ready),
+                elapsed_s=time.monotonic() - started,
+            )
+        except Exception as error:
+            self._trace(
+                "tcp_connect_failed",
+                error=str(error),
+                elapsed_s=time.monotonic() - started,
+            )
             if connection is not None:
                 try:
                     connection.close()
@@ -302,11 +320,36 @@ class RoombaTcpTransport:
             raise TypeError("ARM generation must be an integer")
         if not 1 <= generation <= 0xFFFFFFFF:
             raise ValueError("ARM generation must be from 1 to 4294967295")
-        self.send_packet(
-            bytes([DIAGNOSTIC_MAGIC, CONTROL_ARM]) + struct.pack(">I", generation)
-        )
-        response = self._receive_exact(
-            self.socket, ARM_RESPONSE_SIZE, operation="ARM response"
+        # A new ARM attempt invalidates any prior session authorization before
+        # the request is put on the wire.  Only a fully validated ACK below may
+        # publish the new generation to Drive.
+        self.armed_generation = None
+        self.drive_sequence = 0
+        packet = bytes([DIAGNOSTIC_MAGIC, CONTROL_ARM]) + struct.pack(">I", generation)
+        started = time.monotonic()
+        self._trace("tcp_arm_send_start", generation=generation, bytes=len(packet))
+        self.send_packet(packet)
+        self._trace("tcp_arm_sent", generation=generation, bytes=len(packet))
+        try:
+            response = self._receive_exact(
+                self.socket, ARM_RESPONSE_SIZE, operation="ARM response"
+            )
+        except (OSError, ConnectionError, RoombaDiagnosticError) as error:
+            self.armed_generation = None
+            self.drive_sequence = 0
+            self._trace(
+                "tcp_arm_response_failed",
+                generation=generation,
+                error=str(error),
+                elapsed_s=time.monotonic() - started,
+            )
+            raise
+        self._trace(
+            "tcp_arm_response_received",
+            generation=generation,
+            bytes=len(response),
+            raw=response.hex(),
+            elapsed_s=time.monotonic() - started,
         )
         expected = bytes([DIAGNOSTIC_MAGIC, CONTROL_ARM_RESPONSE])
         if response[:2] != expected:
@@ -367,6 +410,12 @@ class RoombaTcpTransport:
         return mode
 
     def send_twist(self, linear_x, angular_z, *, track_width_m, max_speed_mm_s):
+        self._trace(
+            "transport_send_start",
+            linear_x=linear_x,
+            angular_z=angular_z,
+            generation=self.armed_generation,
+        )
         left, right = twist_to_wheel_speeds(
             linear_x,
             angular_z,
@@ -386,8 +435,21 @@ class RoombaTcpTransport:
             + packet
         )
         self.send_packet(with_crc(payload))
+        self._trace(
+            "tcp_drive_sent",
+            generation=self.armed_generation,
+            sequence=sequence,
+            right_mm_s=right,
+            left_mm_s=left,
+        )
         response = self._receive_exact(
             self.socket, DRIVE_RESPONSE_SIZE, operation="Drive ACK"
+        )
+        self._trace(
+            "tcp_drive_ack_received",
+            generation=self.armed_generation,
+            sequence=sequence,
+            raw=response.hex(),
         )
         if len(response) != DRIVE_RESPONSE_SIZE:
             raise RoombaDiagnosticError("invalid Drive ACK size")
@@ -413,6 +475,12 @@ class RoombaTcpTransport:
                 )
             )
         self.drive_sequence = sequence
+        self._trace(
+            "tcp_drive_ack_validated",
+            generation=self.armed_generation,
+            sequence=sequence,
+            status=status,
+        )
         return sequence
 
     def send_packet(self, packet):

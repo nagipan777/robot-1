@@ -127,6 +127,9 @@ class RoombaBridgeTcpIntegrationTests(unittest.TestCase):
         sim_script = (ROOT / "simulation" / "sim.sh").read_text()
         self.assertIn("COPY roomba_bridge_tcp.py /usr/local/bin/roomba-bridge-tcp", dockerfile)
         self.assertIn("COPY roomba_tcp_transport.py", dockerfile)
+        self.assertIn("COPY latency_trace.py", dockerfile)
+        self.assertIn("COPY roomba_latency_probe.py", dockerfile)
+        self.assertIn("COPY navigation_latency_probe.py", dockerfile)
         self.assertIn("COPY differential_drive.py", dockerfile)
         self.assertNotIn("roomba-bridge-tcp", supervisor)
         self.assertIn("roomba-tcp PICO_IP [PORT]", sim_script)
@@ -174,6 +177,28 @@ class RoombaBridgeTcpIntegrationTests(unittest.TestCase):
         self.assertIn("-p command_timeout:=0.5", case)
         self.assertIn("-p max_drive_session_duration:=0.4", case)
         self.assertIn("-p command_topic:=/roomba/cmd_vel_unstamped", case)
+
+    def test_short_e_launcher_forwards_signals_and_rejects_duplicates(self):
+        sim_script = (ROOT / "simulation" / "sim.sh").read_text()
+        start = sim_script.index("  roomba-short-e-bridge)")
+        case = sim_script[start : sim_script.index("  roomba-tcp-watchdog)", start)]
+        self.assertIn('exec 9>/tmp/roomba-short-e-bridge.lock', case)
+        self.assertIn("flock -n 9", case)
+        self.assertIn("Refusing duplicate roomba-short-e-bridge", case)
+        self.assertIn("cleanup_short_e_bridge", case)
+        self.assertIn("interrupt_short_e_bridge", case)
+        self.assertIn("keep_short_e_stdin_open", case)
+        self.assertIn('kill -0 "$short_e_launcher_pid"', case)
+        self.assertIn("exec 8<&0", case)
+        self.assertIn("read -r -t 0.5 heartbeat", case)
+        self.assertIn('if [ "$heartbeat_status" -eq 1 ]', case)
+        self.assertIn('if [ "$heartbeat_timeouts" -ge 2 ]', case)
+        self.assertIn('wait -n "$bridge_pid" "$stdin_monitor_pid"', case)
+        self.assertIn("trap cleanup_short_e_bridge EXIT", case)
+        self.assertIn('wait "$short_e_exec_pid"', case)
+        self.assertIn('kill -INT "$pid"', case)
+        self.assertIn('/usr/local/bin/roomba-bridge-tcp --ros-args', case)
+        self.assertIn('exec -T simulator bash -lc', case)
 
     def test_bounded_drive_gate_defaults_off_and_revokes_arm_on_deadline(self):
         source = (ROOT / "simulation" / "roomba_bridge_tcp.py").read_text()

@@ -78,6 +78,59 @@ def ready_handler(connection, received):
 
 
 class RoombaTcpTransportTests(unittest.TestCase):
+    def test_drive_trace_separates_send_receive_and_validation(self):
+        generation = 9
+        sequence = 1
+        response = with_crc(
+            bytes(
+                [
+                    DIAGNOSTIC_MAGIC,
+                    SEQUENCED_DRIVE_RESPONSE,
+                    DRIVE_ACK_COMPLETE,
+                ]
+            )
+            + struct.pack(">II", generation, sequence)
+        )
+
+        class FakeSocket:
+            def __init__(self):
+                self.sent = []
+                self.response = bytearray(response)
+
+            def sendall(self, packet):
+                self.sent.append(packet)
+
+            def recv(self, size):
+                chunk = bytes(self.response[:size])
+                del self.response[:size]
+                return chunk
+
+        events = []
+        transport = RoombaTcpTransport(
+            "127.0.0.1", 9000, trace=lambda stage, **fields: events.append(
+                (stage, fields)
+            )
+        )
+        transport.socket = FakeSocket()
+        transport.armed_generation = generation
+
+        self.assertEqual(
+            transport.send_twist(
+                0.01, 0.0, track_width_m=0.235, max_speed_mm_s=20
+            ),
+            sequence,
+        )
+        self.assertEqual(
+            [stage for stage, _ in events],
+            [
+                "transport_send_start",
+                "tcp_drive_sent",
+                "tcp_drive_ack_received",
+                "tcp_drive_ack_validated",
+            ],
+        )
+        self.assertTrue(all(fields["generation"] == generation for _, fields in events))
+
     def test_bounded_drive_session_expires_and_requires_new_arm(self):
         now = [10.0]
         limiter = DriveSessionLimiter(0.4, lambda: now[0])
@@ -105,6 +158,49 @@ class RoombaTcpTransportTests(unittest.TestCase):
         now[0] += 0.201
         self.assertEqual(limiter.observe_nonzero(), "expired")
         self.assertEqual(limiter.observe_nonzero(), "latched")
+
+    def test_short_e_ros_delay_or_silence_cannot_extend_fixed_deadline(self):
+        now = [100.0]
+        limiter = DriveSessionLimiter(0.4, lambda: now[0])
+        limiter.arm()
+        self.assertEqual(limiter.observe_nonzero(), "started")
+        started_at = limiter.started_at
+
+        # Repeated fresh ROS commands do not slide the one-shot deadline.
+        for offset in (0.05, 0.20, 0.399):
+            now[0] = started_at + offset
+            self.assertEqual(limiter.observe_nonzero(), "allowed")
+            self.assertEqual(limiter.started_at, started_at)
+
+        # Model a stalled ROS executor / communication gap.  On resumption,
+        # the late command is rejected before it can refresh the deadline.
+        now[0] = started_at + 1.65
+        self.assertEqual(limiter.observe_nonzero(), "expired")
+        self.assertTrue(limiter.latched)
+        self.assertEqual(limiter.started_at, started_at)
+        self.assertEqual(limiter.observe_nonzero(), "latched")
+
+        # If the host stops dispatching completely, the independent Pico
+        # watchdog bound remains 0.4 + 0.5 = 0.9 seconds from first Drive.
+        pico_watchdog_s = 0.5
+        self.assertLessEqual(limiter.duration_s + pico_watchdog_s, 1.0)
+
+    def test_short_e_stop_latch_rejects_delayed_old_command_until_new_arm(self):
+        now = [200.0]
+        limiter = DriveSessionLimiter(0.4, lambda: now[0])
+        limiter.arm()
+        self.assertEqual(limiter.observe_nonzero(), "started")
+
+        # A normal or deadline STOP latches the session.  An old Twist that
+        # arrives later cannot restart it, regardless of how late it arrives.
+        limiter.latch_stop()
+        for delay in (0.001, 0.76, 1.65, 10.0):
+            now[0] += delay
+            self.assertEqual(limiter.observe_nonzero(), "latched")
+
+        # Only a separate explicit ARM creates a new one-shot session.
+        limiter.arm()
+        self.assertEqual(limiter.observe_nonzero(), "started")
 
     def test_bounded_drive_stop_latches_and_invalid_limits_are_rejected(self):
         now = [1.0]
@@ -308,6 +404,40 @@ class RoombaTcpTransportTests(unittest.TestCase):
         transport.armed_generation = 99
         transport.close(send_stop=False)
         self.assertIsNone(transport.armed_generation)
+
+    def test_arm_timeout_revokes_prior_generation_without_drive_retry(self):
+        class TimeoutSocket:
+            def __init__(self):
+                self.sent = []
+
+            def sendall(self, packet):
+                self.sent.append(packet)
+
+            def recv(self, _size):
+                raise socket.timeout("timed out")
+
+        events = []
+        connection = TimeoutSocket()
+        transport = RoombaTcpTransport(
+            "127.0.0.1",
+            9000,
+            trace=lambda stage, **fields: events.append((stage, fields)),
+        )
+        transport.socket = connection
+        transport.armed_generation = 88
+        transport.drive_sequence = 4
+
+        with self.assertRaisesRegex(
+            RoombaDiagnosticError,
+            r"ARM response timed out: received 0/7 bytes",
+        ):
+            transport.arm(89)
+
+        self.assertIsNone(transport.armed_generation)
+        self.assertEqual(transport.drive_sequence, 0)
+        self.assertEqual(len(connection.sent), 1)
+        self.assertEqual(connection.sent[0][:2], bytes([DIAGNOSTIC_MAGIC, CONTROL_ARM]))
+        self.assertIn("tcp_arm_response_failed", [stage for stage, _ in events])
 
     def test_timeout_and_stop_only_gate(self):
         now = [10.0]

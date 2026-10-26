@@ -21,7 +21,9 @@ UART_DIAGNOSTIC_TIMEOUT_MS = 1000
 UART_DRAIN_QUIET_MS = 10
 UART_DRAIN_TIMEOUT_MS = 100
 TCP_SEND_TIMEOUT_MS = 100
+FIRST_FRAME_TIMEOUT_MS = 500
 ALLOW_NONZERO_DRIVE = False
+BRC_WAKE_ENABLED = False
 
 STOP = bytes([145, 0, 0, 0, 0])
 READY = b"READY\n"
@@ -82,6 +84,7 @@ uart = machine.UART(
     rx=machine.Pin(5),
 )
 brc = machine.Pin(2, machine.Pin.OUT, value=1)
+brc_wake_sent = False
 led = machine.Pin("LED", machine.Pin.OUT)
 led.off()
 wlan = network.WLAN(network.STA_IF)
@@ -89,6 +92,7 @@ wlan = network.WLAN(network.STA_IF)
 
 class MotionLatch:
     STOPPED = "STOPPED"
+    ARM_PENDING = "ARM_PENDING"
     ARMED = "ARMED"
     LATCHED_STOP = "LATCHED_STOP"
 
@@ -97,15 +101,38 @@ class MotionLatch:
         self.generation = None
         self.highest_generation = 0
         self.last_sequence = 0
+        self.armed_at_ms = None
+        self.pending_generation = None
 
-    def arm(self, generation):
+    def reserve(self, generation):
         if generation <= self.highest_generation:
             return False
         self.highest_generation = generation
-        self.generation = generation
+        self.generation = None
+        self.pending_generation = generation
         self.last_sequence = 0
+        self.armed_at_ms = None
+        self.state = self.ARM_PENDING
+        return True
+
+    def commit(self, generation):
+        if (
+            self.state != self.ARM_PENDING
+            or generation != self.highest_generation
+            or generation != self.pending_generation
+        ):
+            return False
+        self.generation = generation
+        self.pending_generation = None
+        self.last_sequence = 0
+        self.armed_at_ms = time.ticks_ms()
         self.state = self.ARMED
         return True
+
+    def arm(self, generation):
+        if not self.reserve(generation):
+            return False
+        return self.commit(generation)
 
     def accepts(self, generation, sequence):
         return (
@@ -116,15 +143,27 @@ class MotionLatch:
 
     def record(self, sequence):
         self.last_sequence = sequence
+        self.armed_at_ms = None
+
+    def arm_expired(self, now_ms):
+        return (
+            self.state == self.ARMED
+            and self.armed_at_ms is not None
+            and time.ticks_diff(now_ms, self.armed_at_ms) >= COMMAND_TIMEOUT_MS
+        )
 
     def normal_stop(self):
-        if self.state == self.ARMED:
+        if self.state in (self.ARM_PENDING, self.ARMED):
             self.state = self.STOPPED
             self.generation = None
+            self.pending_generation = None
+            self.armed_at_ms = None
 
     def latch_stop(self):
         self.state = self.LATCHED_STOP
         self.generation = None
+        self.pending_generation = None
+        self.armed_at_ms = None
 
 
 motion_latch = MotionLatch()
@@ -175,9 +214,15 @@ def wait_for_wifi():
 
 
 def roomba_init():
-    brc.off()
-    time.sleep_ms(200)
-    brc.on()
+    global brc_wake_sent
+    if BRC_WAKE_ENABLED and not brc_wake_sent:
+        brc.off()
+        time.sleep_ms(200)
+        brc.on()
+        brc_wake_sent = True
+        print("BRC wake pulse: low_ms=200")
+    else:
+        time.sleep_ms(200)
     time.sleep_ms(500)
     uart.write(bytes([128]))
     time.sleep_ms(200)
@@ -259,10 +304,14 @@ def send_all(connection, data):
             time.sleep_ms(1)
             continue
         if sent is None:
-            sent = len(data) - offset
+            if time.ticks_diff(time.ticks_ms(), started) >= TCP_SEND_TIMEOUT_MS:
+                raise OSError("TCP send timed out")
+            time.sleep_ms(1)
+            continue
         if sent <= 0:
             raise OSError("TCP send returned {}".format(sent))
         offset += sent
+    return offset
 
 
 def drain_uart_until_quiet(
@@ -271,14 +320,26 @@ def drain_uart_until_quiet(
     """Discard stale UART bytes and require a bounded quiet interval."""
     started = time.ticks_ms()
     quiet_started = started
+    discarded_count = 0
+    discarded_tail = bytearray()
     while time.ticks_diff(time.ticks_ms(), started) < timeout_ms:
         available = uart.any()
         if available:
-            uart.read(available)
+            discarded = uart.read(available)
+            if discarded:
+                discarded_count += len(discarded)
+                discarded_tail.extend(discarded)
+                if len(discarded_tail) > 16:
+                    discarded_tail = discarded_tail[-16:]
             quiet_started = time.ticks_ms()
         elif time.ticks_diff(time.ticks_ms(), quiet_started) >= quiet_ms:
             return True
         time.sleep_ms(2)
+    print(
+        "UART drain timeout: discarded_count={} tail={}".format(
+            discarded_count, hex_bytes(discarded_tail)
+        )
+    )
     return False
 
 
@@ -369,9 +430,9 @@ def handle_arm(connection, generation):
     if not ALLOW_NONZERO_DRIVE:
         status = ARM_REJECTED_LOCK
         print("ARM rejected: nonzero drive lock; generation={}".format(generation))
-    elif motion_latch.arm(generation):
+    elif motion_latch.reserve(generation):
         status = ARM_ACCEPTED
-        print("ARM accepted: generation={}".format(generation))
+        print("ARM reserved: generation={}".format(generation))
     else:
         status = ARM_REJECTED_GENERATION
         print(
@@ -379,12 +440,27 @@ def handle_arm(connection, generation):
                 generation, motion_latch.highest_generation
             )
         )
-    send_all(
-        connection,
+    response = (
         bytes([DIAGNOSTIC_MAGIC, CONTROL_ARM_RESPONSE, status])
-        + encoded_32(motion_latch.highest_generation),
+        + encoded_32(motion_latch.highest_generation)
     )
-    return status == ARM_ACCEPTED
+    try:
+        print("ARM ACK send start: bytes={} status={}".format(len(response), status))
+        sent = send_all(connection, response)
+    except OSError as error:
+        stop_roomba()
+        motion_latch.latch_stop()
+        print("ARM ACK send failed: status={} error={}".format(status, error))
+        raise
+    print("ARM ACK sent: bytes={} status={}".format(sent, status))
+    if status == ARM_ACCEPTED:
+        if not motion_latch.commit(generation):
+            stop_roomba()
+            motion_latch.latch_stop()
+            raise OSError("ARM commit failed after ACK")
+        print("ARM committed: generation={}".format(generation))
+        return True
+    return False
 
 
 def forward_valid_frames(received, connection):
@@ -527,6 +603,25 @@ def enforce_command_watchdog(last_command, stopped):
     return True
 
 
+def enforce_arm_watchdog():
+    fired_at = time.ticks_ms()
+    if not motion_latch.arm_expired(fired_at):
+        return False
+    armed_at = motion_latch.armed_at_ms
+    uart_written = uart_write_exact(STOP)
+    motion_latch.latch_stop()
+    print(
+        "ARM watchdog STOP: fired_at_ms={} armed_at_ms={} "
+        "elapsed_ms={} uart_written={}".format(
+            fired_at,
+            armed_at,
+            time.ticks_diff(fired_at, armed_at),
+            uart_written,
+        )
+    )
+    return True
+
+
 def make_server():
     server = socket.socket()
     server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -546,12 +641,14 @@ def receive_client(connection, address):
         # Keep the socket blocking until OI initialization is complete.  The host
         # must not send wheel commands before receiving this readiness marker.
         roomba_init()
-        send_all(connection, READY)
-        print("relay ready: at_ms={}".format(time.ticks_ms()))
+        ready_sent = send_all(connection, READY)
+        ready_at = time.ticks_ms()
+        print("relay ready: at_ms={} bytes={}".format(ready_at, ready_sent))
         connection.setblocking(False)
 
         last_command = time.ticks_ms()
         stopped = True
+        first_frame_received = False
         received = bytearray()
         while wlan.isconnected():
             try:
@@ -559,6 +656,7 @@ def receive_client(connection, address):
                 if data == b"":
                     break
                 if data:
+                    first_frame_received = True
                     received.extend(data)
                     received, forwarded = forward_valid_frames(received, connection)
                     if forwarded:
@@ -573,6 +671,15 @@ def receive_client(connection, address):
                     disconnect_reason = "TCP receive error: {}".format(error)
                     break
 
+            if (
+                not first_frame_received
+                and time.ticks_diff(time.ticks_ms(), ready_at)
+                >= FIRST_FRAME_TIMEOUT_MS
+            ):
+                disconnect_reason = "first frame timeout"
+                break
+
+            enforce_arm_watchdog()
             stopped = enforce_command_watchdog(last_command, stopped)
 
             time.sleep_ms(5)

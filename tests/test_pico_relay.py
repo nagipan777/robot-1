@@ -47,7 +47,7 @@ class PicoRelaySafetyTests(unittest.TestCase):
         )
         self.assertIn("disconnect STOP: at_ms=", receive_client)
         self.assertIn('"connected: {} at_ms={}"', receive_client)
-        self.assertIn('"relay ready: at_ms={}"', receive_client)
+        self.assertIn('"relay ready: at_ms={} bytes={}"', receive_client)
         self.assertIn("roomba_init()", receive_client)
         self.assertIn("send_all(connection, READY)", receive_client)
         self.assertIn("diagnostics remain locked", source)

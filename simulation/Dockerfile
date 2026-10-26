@@ -58,8 +58,11 @@ COPY dry_run_protocol.py /usr/local/bin/dry_run_protocol.py
 COPY pico_dry_run_transport.py /usr/local/bin/pico_dry_run_transport.py
 COPY pico_dry_run_bridge.py /usr/local/bin/pico-dry-run-bridge
 COPY differential_drive.py /usr/local/bin/differential_drive.py
+COPY latency_trace.py /usr/local/bin/latency_trace.py
 COPY roomba_tcp_transport.py /usr/local/bin/roomba_tcp_transport.py
 COPY roomba_bridge_tcp.py /usr/local/bin/roomba-bridge-tcp
+COPY roomba_latency_probe.py /usr/local/bin/roomba-latency-probe
+COPY navigation_latency_probe.py /usr/local/bin/navigation-latency-probe
 COPY roomba_wheel_lift_test.py /usr/local/bin/roomba-wheel-lift-test
 COPY roomba_wheel_lift_test_core.py /usr/local/bin/roomba_wheel_lift_test_core.py
 COPY aruco_pose_core.py /usr/local/bin/aruco_pose_core.py
@@ -93,6 +96,8 @@ RUN chmod +x /usr/local/bin/start-simulation /usr/local/bin/webcam-bridge \
     /usr/local/bin/litter-model /usr/local/bin/start-vision-controller \
     /usr/local/bin/calibration-marker \
     /usr/local/bin/map-frame-adapter /usr/local/bin/vision-turn-controller \
+    /usr/local/bin/roomba-latency-probe \
+    /usr/local/bin/navigation-latency-probe \
     /usr/local/bin/unstamped-cmd-relay /usr/local/bin/roomba-dry-run-adapter \
     /usr/local/bin/cmd-vel-output-adapter \
     /usr/local/bin/pico-dry-run-bridge \

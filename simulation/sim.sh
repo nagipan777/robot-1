@@ -255,9 +255,147 @@ case "${1:-help}" in
     fi
     host="$2"
     port="${4:-9000}"
-    "${compose[@]}" exec simulator bash -lc \
-      'source /opt/create3_ws/install/setup.bash; exec /usr/local/bin/roomba-bridge-tcp --ros-args -p host:="$1" -p port:="$2" -p drive_enabled:=true -p diagnostic_on_connect:=true -p watchdog_test_mode:=false -p max_speed_mm_s:=20 -p command_timeout:=0.5 -p max_drive_session_duration:=0.4 -p command_topic:=/roomba/cmd_vel_unstamped' \
-      -- "$host" "$port"
+    short_e_owner="$$-$(date +%s)-${RANDOM}"
+    short_e_pid_file=/tmp/roomba-short-e-bridge.pid
+
+    cleanup_short_e_bridge() {
+      # docker compose exec can outlive the host shell when Ctrl+C is used
+      # through a pipe (for example, `... | tee bridge.log`).  Stop only the
+      # bridge owned by this invocation; never terminate another trial.
+      "${compose[@]}" exec -T simulator bash -lc '
+        pid_file="$1"
+        expected_owner="$2"
+        [ -r "$pid_file" ] || exit 0
+        read -r pid owner < "$pid_file" || exit 0
+        [ "$owner" = "$expected_owner" ] || exit 0
+        case "$pid" in ""|*[!0-9]*) exit 0 ;; esac
+        if kill -0 "$pid" 2>/dev/null &&
+           tr "\000" " " < "/proc/$pid/cmdline" | grep -q "/usr/local/bin/roomba-bridge-tcp"; then
+          kill -INT "$pid" 2>/dev/null || true
+          count=0
+          while kill -0 "$pid" 2>/dev/null && [ "$count" -lt 50 ]; do
+            sleep 0.1
+            count=$((count + 1))
+          done
+          if kill -0 "$pid" 2>/dev/null; then
+            kill -TERM "$pid" 2>/dev/null || true
+          fi
+        fi
+        current_owner=""
+        if [ -r "$pid_file" ]; then
+          read -r _ current_owner < "$pid_file" || true
+        fi
+        if [ "$current_owner" = "$expected_owner" ]; then
+          rm -f "$pid_file"
+        fi
+      ' -- "$short_e_pid_file" "$short_e_owner" >/dev/null 2>&1 || true
+    }
+
+    short_e_signal_status=0
+    short_e_exec_pid=""
+    short_e_launcher_pid=$$
+    keep_short_e_stdin_open() {
+      # Heartbeats form a lifecycle lease. If this host command is interrupted
+      # (including when stdout is piped through tee), heartbeats stop even if
+      # Docker leaves the exec stdin stream open.
+      while kill -0 "$short_e_launcher_pid" 2>/dev/null; do
+        printf '.\n' 2>/dev/null || return 0
+        sleep 0.2
+      done
+    }
+    interrupt_short_e_bridge() {
+      short_e_signal_status="$1"
+      if [ -n "$short_e_exec_pid" ] && kill -0 "$short_e_exec_pid" 2>/dev/null; then
+        kill -INT "$short_e_exec_pid" 2>/dev/null || true
+      fi
+      cleanup_short_e_bridge
+    }
+    trap 'interrupt_short_e_bridge 130' INT
+    trap 'interrupt_short_e_bridge 143' TERM
+    trap cleanup_short_e_bridge EXIT
+    set +e
+    keep_short_e_stdin_open | "${compose[@]}" exec -T simulator bash -lc '
+      source /opt/create3_ws/install/setup.bash
+      pid_file="$1"
+      owner="$2"
+      host="$3"
+      port="$4"
+      exec 9>/tmp/roomba-short-e-bridge.lock
+      if ! flock -n 9; then
+        echo "Refusing duplicate roomba-short-e-bridge: another instance is running" >&2
+        exit 73
+      fi
+      bridge_pid=""
+      stdin_monitor_pid=""
+      stop_bridge() {
+        if [ -n "$bridge_pid" ] && kill -0 "$bridge_pid" 2>/dev/null; then
+          kill -INT "$bridge_pid" 2>/dev/null || true
+          wait "$bridge_pid" 2>/dev/null || true
+        fi
+        if [ -n "$stdin_monitor_pid" ]; then
+          kill "$stdin_monitor_pid" 2>/dev/null || true
+          wait "$stdin_monitor_pid" 2>/dev/null || true
+        fi
+        rm -f "$pid_file"
+      }
+      trap stop_bridge EXIT INT TERM
+      /usr/local/bin/roomba-bridge-tcp --ros-args -p host:="$host" -p port:="$port" -p drive_enabled:=true -p diagnostic_on_connect:=true -p watchdog_test_mode:=false -p max_speed_mm_s:=20 -p command_timeout:=0.5 -p max_drive_session_duration:=0.4 -p command_topic:=/roomba/cmd_vel_unstamped &
+      bridge_pid=$!
+      printf "%s %s\n" "$bridge_pid" "$owner" > "$pid_file"
+      exec 8<&0
+      # Do not trust EOF alone: Docker may retain the exec stream after its
+      # client is interrupted. A missing heartbeat expires this wrapper.
+      (
+        heartbeat_count=0
+        heartbeat_timeouts=0
+        heartbeat_status=0
+        while true; do
+          if IFS= read -r -t 0.5 heartbeat; then
+            heartbeat_timeouts=0
+          else
+            heartbeat_status=$?
+            # EOF means the host-side exec is gone and must stop immediately.
+            # A single timed-read miss can occur under camera/AI load, so only
+            # expire the lifecycle lease after two consecutive 0.5 s misses.
+            if [ "$heartbeat_status" -eq 1 ]; then
+              break
+            fi
+            heartbeat_timeouts=$((heartbeat_timeouts + 1))
+            if [ "$heartbeat_timeouts" -ge 2 ]; then
+              break
+            fi
+            continue
+          fi
+          [ "$heartbeat" = "." ] || continue
+          heartbeat_count=$((heartbeat_count + 1))
+        done <&8
+        echo "short-E lifecycle heartbeat ended: read_status=$heartbeat_status received=$heartbeat_count" >&2
+        exit "$heartbeat_status"
+      ) &
+      stdin_monitor_pid=$!
+      set +e
+      wait -n "$bridge_pid" "$stdin_monitor_pid"
+      first_status=$?
+      set -e
+      if kill -0 "$bridge_pid" 2>/dev/null; then
+        # Host-side docker exec disappeared: make Python run its normal
+        # KeyboardInterrupt/finally STOP path before this wrapper exits.
+        kill -INT "$bridge_pid" 2>/dev/null || true
+        wait "$bridge_pid" 2>/dev/null || true
+        exit 130
+      fi
+      exit "$first_status"
+    ' -- "$short_e_pid_file" "$short_e_owner" "$host" "$port" &
+    short_e_exec_pid=$!
+    wait "$short_e_exec_pid"
+    short_e_status=$?
+    set -e
+    cleanup_short_e_bridge
+    trap - EXIT INT TERM
+    if [ "$short_e_signal_status" -ne 0 ]; then
+      exit "$short_e_signal_status"
+    fi
+    exit "$short_e_status"
     ;;
   roomba-tcp-watchdog)
     if [ "$#" -lt 3 ] || [ "$#" -gt 4 ] || [ "$3" != "WHEELS_LIFTED" ]; then

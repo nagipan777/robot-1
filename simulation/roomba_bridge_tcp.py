@@ -23,6 +23,7 @@ from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 
 from differential_drive import twist_to_wheel_speeds
+from latency_trace import LatencyTrace
 from roomba_tcp_transport import (
     CommandState,
     DriveSessionLimiter,
@@ -66,6 +67,7 @@ class RoombaBridgeTcp(Node):
         self.declare_parameter("watchdog_test_mode", False)
         self.declare_parameter("watchdog_test_silence", 0.75)
         self.declare_parameter("watchdog_test_confirmation", "")
+        self.declare_parameter("latency_trace_path", "")
 
         self.host = self.get_parameter("host").value
         self.port = self.get_parameter("port").value
@@ -88,6 +90,7 @@ class RoombaBridgeTcp(Node):
         self.watchdog_test_confirmation = self.get_parameter(
             "watchdog_test_confirmation"
         ).value
+        self.latency_trace_path = self.get_parameter("latency_trace_path").value
         if self.wheel_base <= 0.0:
             raise ValueError("wheel_base must be positive")
         if not 1 <= self.max_speed_mm_s <= 500:
@@ -109,7 +112,12 @@ class RoombaBridgeTcp(Node):
         if not 0.5 < self.watchdog_test_silence <= 1.0:
             raise ValueError("watchdog_test_silence must be > 0.5 and <= 1.0")
 
-        self.transport = RoombaTcpTransport(self.host, self.port)
+        self.latency_trace = LatencyTrace(
+            self.latency_trace_path, component="roomba_bridge_tcp"
+        )
+        self.transport = RoombaTcpTransport(
+            self.host, self.port, trace=self.latency_trace.record
+        )
         self.command_state = CommandState(
             self.drive_enabled, self.command_timeout, time.monotonic
         )
@@ -181,9 +189,24 @@ class RoombaBridgeTcp(Node):
             self.get_logger().warn(f"Pico W に接続できません: {error}")
 
     def on_cmd(self, msg: Twist):
+        self.latency_trace.record(
+            "bridge_receive",
+            linear_x=msg.linear.x,
+            angular_z=msg.angular.z,
+            generation=self.transport.armed_generation,
+        )
         if not self.drive_enabled:
             self.clear_command()
             is_nonzero = msg.linear.x != 0.0 or msg.angular.z != 0.0
+            if is_nonzero:
+                self.latency_trace.record(
+                    "safety_decision",
+                    accepted=False,
+                    reason="drive_enabled_false",
+                    linear_x=msg.linear.x,
+                    angular_z=msg.angular.z,
+                    generation=self.transport.armed_generation,
+                )
             if is_nonzero and not self.disabled_rejection_logged:
                 self.disabled_rejection_logged = True
                 self.get_logger().warn(
@@ -197,6 +220,12 @@ class RoombaBridgeTcp(Node):
                 self.disabled_rejection_logged = False
             return
         if msg.linear.x == 0.0 and msg.angular.z == 0.0:
+            self.latency_trace.record(
+                "safety_decision",
+                accepted=True,
+                reason="stop",
+                generation=self.transport.armed_generation,
+            )
             self.clear_command()
             self.drive_session_limiter.latch_stop()
             if self.transport.connected:
@@ -209,15 +238,24 @@ class RoombaBridgeTcp(Node):
         if not self.transport.connected:
             # A command received before READY must not become valid later.
             self.clear_command()
+            self.latency_trace.record(
+                "safety_decision", accepted=False, reason="transport_disconnected"
+            )
             return
         if not self.safe_gate.permits(msg.linear.x, msg.angular.z):
             self.clear_command()
+            self.latency_trace.record(
+                "safety_decision", accepted=False, reason="safe_gate"
+            )
             self.get_logger().warn(
                 "Rejected non-zero command: STOP ACK and OI Safe are not confirmed"
             )
             return
         if self.transport.armed_generation is None:
             self.clear_command()
+            self.latency_trace.record(
+                "safety_decision", accepted=False, reason="arm_required"
+            )
             self.get_logger().warn(
                 "Rejected non-zero command: explicit ARM generation is required"
             )
@@ -225,6 +263,11 @@ class RoombaBridgeTcp(Node):
         session_event = self.drive_session_limiter.observe_nonzero()
         if session_event in ("expired", "latched"):
             self.clear_command()
+            self.latency_trace.record(
+                "safety_decision",
+                accepted=False,
+                reason="bounded_drive_" + session_event,
+            )
             if session_event == "expired":
                 self.expire_bounded_drive()
             elif not self.bounded_drive_rejection_logged:
@@ -243,6 +286,14 @@ class RoombaBridgeTcp(Node):
             self.watchdog_test_state.update(msg.linear.x, msg.angular.z)
         else:
             self.command_state.update(msg.linear.x, msg.angular.z)
+        self.latency_trace.record(
+            "safety_decision",
+            accepted=True,
+            reason="nonzero_command_queued",
+            linear_x=msg.linear.x,
+            angular_z=msg.angular.z,
+            generation=self.transport.armed_generation,
+        )
         self.arm_deadline = 0.0
 
     def on_arm(self, msg: UInt32):
@@ -261,6 +312,9 @@ class RoombaBridgeTcp(Node):
             self.bounded_drive_rejection_logged = False
             self.clear_command()
             self.arm_deadline = time.monotonic() + self.arm_hold_timeout
+            self.latency_trace.record(
+                "arm_accepted", generation=generation
+            )
             self.get_logger().warn(
                 "ARM accepted for this TCP session: generation=%d" % generation
             )
@@ -305,6 +359,12 @@ class RoombaBridgeTcp(Node):
                 return
 
         try:
+            self.latency_trace.record(
+                "transport_dispatch",
+                linear_x=command[0],
+                angular_z=command[1],
+                generation=self.transport.armed_generation,
+            )
             sequence = self.transport.send_twist(
                 command[0],
                 command[1],
@@ -419,6 +479,7 @@ class RoombaBridgeTcp(Node):
         self.clear_command()
         self.clear_motion_authorization()
         self.transport.close(send_stop=True)
+        self.latency_trace.close()
 
 
 def main():
