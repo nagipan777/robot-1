@@ -85,8 +85,22 @@ are unperformed.
 - Branch: `fix-arm-ack-session-recovery`
 - Base commit already pushed: `5270832aa9bf740ab155a9e4417e511742f23f0a`
 - PR: https://github.com/nagipan777/robot-1/pull/3
-- The additional connection-ID instrumentation, stress script/results, and
-  this report require a follow-up commit/push.
+- Connection-ID instrumentation and stress evidence: `ffa1f4d`.
+- P3–P7 validation follow-up: `bf539f4`.
+- Attended Pico diagnostic preparation: `d4acf7f`.
+- All three follow-up commits are pushed to the branch above. The working tree
+  was clean and matched `origin/fix-arm-ack-session-recovery` when rechecked on
+  2026-10-26 (Asia/Tokyo).
+
+## F.1 Final host-side recheck
+
+The focused non-driving suite was rerun with Python `unittest` after the final
+push: **131/131 PASS** in 0.301 s. The suite covered the Pico protocol, host TCP
+transport, ROS bridge gates, locked ARM probe, log correlator, dry-run protocol,
+diagnostic codec, and Roomba driver. The initial sandboxed attempt could not
+bind a loopback socket (`PermissionError: [Errno 1]`); rerunning the identical
+suite with loopback networking permitted passed completely. No real Pico IP,
+ARM request, or Drive command was used in this recheck.
 
 ## G. Remaining issues (maximum three)
 
