@@ -70,6 +70,13 @@ extend any motion authorization or watchdog.
 
 ## Diagnostics and tests
 
+The Pico now emits monotonic, connection-correlated events for
+`TCP_ACCEPT`, `TCP_RECONNECT`, `READY_TX_BEGIN/OK/ERROR`, `ARM_RX`,
+`ARM_PENDING`, `ACK_TX_BEGIN/PARTIAL/OK/ERROR`, `ARM_COMMIT`, `ARM_EXPIRED`,
+`STOP_LATCHED`, `EXCEPTION`, and `TCP_CLOSE`. The ARM state stores both its
+generation and connection ID. A Drive from a different connection ID is
+rejected even if its generation and sequence are otherwise valid.
+
 `simulation/arm_ack_lock_probe.py` performs repeated locked, non-driving
 cycles and optionally writes JSON. Each cycle is:
 
@@ -89,12 +96,15 @@ Pico-only run. It does not send a Drive opcode.
 Automated non-driving result on 2026-10-26:
 
 - Python syntax compilation: PASS.
-- ARM/TCP and related safety suites: **87/87 PASS**.
+- ARM/TCP and related safety suites after connection-ID instrumentation:
+  **92/92 PASS**.
 - Covered: `send(None)` retry, partial ACK, finite send timeout, ACK failure
   STOP/latch, generation burn/replay rejection, STOP-during-ACK commit denial,
   no-first-Drive 500 ms expiry, host 0/7 timeout reporting, prior-generation
   revocation, reconnect authorization reset, STOP diagnostics, Safe gate, and
   fixed-duration drive-session logic.
+- New boundary coverage includes ACK chunk sizes 1 through 6, disconnect after
+  three ACK bytes, and rejection of a Drive tagged with the old connection ID.
 - Full discovery collected 280 tests. Eight vision/data modules could not load
   because the Mac environment lacks NumPy/OpenCV; three pre-existing
   `test_ip` discovery-name collisions also failed. These are outside the ARM
@@ -117,3 +127,40 @@ Short-E motion status remains **NO-GO** until all of the following are recorded:
 
 No actual-Pico test was run unattended because Pico/Roomba power and physical
 connections require the operator. No Short-E retry is authorized by this file.
+
+## Mac-native versus Colima mock TCP measurements
+
+These measurements use a localhost mock Pico and must not be presented as real
+Pico or Wi-Fi results. No Drive packet is constructed or sent; every ARM reply
+is the locked rejection status `0x02`.
+
+| Normal mock measurement | Mac native | Colima/Docker |
+|---|---:|---:|
+| Cycles / complete ACKs | 300 / 300 | 300 / 300 |
+| READY complete | 300 / 300 | 300 / 300 |
+| Timeouts | 0 | 0 |
+| Mean connect | 0.343 ms | 0.091 ms |
+| Max connect | 7.349 ms | 3.088 ms |
+| Mean READY receive | 0.217 ms | 0.115 ms |
+| Max READY receive | 22.092 ms | 0.468 ms |
+| Mean ARM ACK receive | 0.183 ms | 0.101 ms |
+| p95 ARM ACK receive | 0.223 ms | 0.160 ms |
+| Max ARM ACK receive | 19.772 ms | 0.235 ms |
+
+The separate 100-cycle fault matrix produced the same classifications in both
+environments: 50 complete ACKs, 25 deliberate `0/7` timeouts, 25 deliberate
+`3/7` close/partial receives, and 100/100 complete READY messages. Thus the
+Mac and container clients both distinguish ACK generation from complete host
+receipt and recover on the following new TCP connection in the mock setup.
+
+Raw results:
+
+- `docs/arm_tcp_mock_mac_normal.json`
+- `docs/arm_tcp_mock_mac_matrix.json`
+- `docs/arm_tcp_mock_docker_normal.json`
+- `docs/arm_tcp_mock_docker_matrix.json`
+
+Not measured unattended: Pico Wi-Fi connect/READY/ACK latency, RSSI, firmware
+version, Pico memory/reboot history, ping loss, and real Mac-versus-container
+paths to port 9000. Those require the operator to confirm Pico power, deployed
+code, physical disconnection, and locks first.

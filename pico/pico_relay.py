@@ -87,6 +87,14 @@ brc_wake_sent = False
 led = machine.Pin("LED", machine.Pin.OUT)
 led.off()
 wlan = network.WLAN(network.STA_IF)
+connection_counter = 0
+
+
+def log_event(event, **fields):
+    parts = [event, "at_ms={}".format(time.ticks_ms())]
+    for key in sorted(fields):
+        parts.append("{}={}".format(key, fields[key]))
+    print(" ".join(parts))
 
 
 class MotionLatch:
@@ -102,27 +110,34 @@ class MotionLatch:
         self.last_sequence = 0
         self.armed_at_ms = None
         self.pending_generation = None
+        self.connection_id = None
+        self.pending_connection_id = None
 
-    def reserve(self, generation):
+    def reserve(self, generation, connection_id=None):
         if generation <= self.highest_generation:
             return False
         self.highest_generation = generation
         self.generation = None
         self.pending_generation = generation
+        self.connection_id = None
+        self.pending_connection_id = connection_id
         self.last_sequence = 0
         self.armed_at_ms = None
         self.state = self.ARM_PENDING
         return True
 
-    def commit(self, generation):
+    def commit(self, generation, connection_id=None):
         if (
             self.state != self.ARM_PENDING
             or generation != self.highest_generation
             or generation != self.pending_generation
+            or connection_id != self.pending_connection_id
         ):
             return False
         self.generation = generation
         self.pending_generation = None
+        self.connection_id = connection_id
+        self.pending_connection_id = None
         self.last_sequence = 0
         self.armed_at_ms = time.ticks_ms()
         self.state = self.ARMED
@@ -133,10 +148,11 @@ class MotionLatch:
             return False
         return self.commit(generation)
 
-    def accepts(self, generation, sequence):
+    def accepts(self, generation, sequence, connection_id=None):
         return (
             self.state == self.ARMED
             and generation == self.generation
+            and connection_id == self.connection_id
             and sequence > self.last_sequence
         )
 
@@ -156,12 +172,16 @@ class MotionLatch:
             self.state = self.STOPPED
             self.generation = None
             self.pending_generation = None
+            self.connection_id = None
+            self.pending_connection_id = None
             self.armed_at_ms = None
 
     def latch_stop(self):
         self.state = self.LATCHED_STOP
         self.generation = None
         self.pending_generation = None
+        self.connection_id = None
+        self.pending_connection_id = None
         self.armed_at_ms = None
 
 
@@ -288,7 +308,7 @@ def hex_bytes(data):
     return " ".join("{:02x}".format(value) for value in data)
 
 
-def send_all(connection, data):
+def send_all(connection, data, event_prefix=None, connection_id=None, generation=None):
     offset = 0
     started = time.ticks_ms()
     while offset < len(data):
@@ -297,18 +317,28 @@ def send_all(connection, data):
         except OSError as error:
             code = error.args[0] if error.args else None
             if code not in WOULD_BLOCK:
+                if event_prefix:
+                    log_event(event_prefix + "_ERROR", connection_id=connection_id, errno=code, generation=generation, sent=offset)
                 raise
             if time.ticks_diff(time.ticks_ms(), started) >= TCP_SEND_TIMEOUT_MS:
+                if event_prefix:
+                    log_event(event_prefix + "_ERROR", connection_id=connection_id, generation=generation, error="would_block_timeout", sent=offset)
                 raise OSError("TCP send timed out")
             time.sleep_ms(1)
             continue
         if sent is None:
             if time.ticks_diff(time.ticks_ms(), started) >= TCP_SEND_TIMEOUT_MS:
+                if event_prefix:
+                    log_event(event_prefix + "_ERROR", connection_id=connection_id, generation=generation, error="none_timeout", sent=offset)
                 raise OSError("TCP send timed out")
             time.sleep_ms(1)
             continue
         if sent <= 0:
+            if event_prefix:
+                log_event(event_prefix + "_ERROR", connection_id=connection_id, generation=generation, error="send_nonpositive", sent=offset)
             raise OSError("TCP send returned {}".format(sent))
+        if event_prefix and sent < len(data) - offset:
+            log_event(event_prefix + "_PARTIAL", connection_id=connection_id, generation=generation, sent=sent, total_sent=offset + sent)
         offset += sent
     return offset
 
@@ -425,12 +455,14 @@ def handle_oi_mode_diagnostic(connection, stop_first=True):
     send_all(connection, bytes([DIAGNOSTIC_MAGIC, DIAGNOSTIC_ERROR, 1]))
 
 
-def handle_arm(connection, generation):
+def handle_arm(connection, generation, connection_id=None):
+    log_event("ARM_RX", connection_id=connection_id, generation=generation)
     if not ALLOW_NONZERO_DRIVE:
         status = ARM_REJECTED_LOCK
         print("ARM rejected: nonzero drive lock; generation={}".format(generation))
-    elif motion_latch.reserve(generation):
+    elif motion_latch.reserve(generation, connection_id):
         status = ARM_ACCEPTED
+        log_event("ARM_PENDING", connection_id=connection_id, generation=generation)
         print("ARM reserved: generation={}".format(generation))
     else:
         status = ARM_REJECTED_GENERATION
@@ -445,24 +477,29 @@ def handle_arm(connection, generation):
     )
     try:
         print("ARM ACK send start: bytes={} status={}".format(len(response), status))
-        sent = send_all(connection, response)
+        log_event("ACK_TX_BEGIN", connection_id=connection_id, generation=generation, planned=len(response))
+        sent = send_all(connection, response, "ACK_TX", connection_id, generation)
     except OSError as error:
         stop_roomba()
         motion_latch.latch_stop()
         print("ARM ACK send failed: status={} error={}".format(status, error))
+        log_event("ACK_TX_ERROR", connection_id=connection_id, generation=generation, error=error)
+        log_event("STOP_LATCHED", connection_id=connection_id, reason="arm_ack_error")
         raise
     print("ARM ACK sent: bytes={} status={}".format(sent, status))
+    log_event("ACK_TX_OK", connection_id=connection_id, generation=generation, sent=sent)
     if status == ARM_ACCEPTED:
-        if not motion_latch.commit(generation):
+        if not motion_latch.commit(generation, connection_id):
             stop_roomba()
             motion_latch.latch_stop()
             raise OSError("ARM commit failed after ACK")
         print("ARM committed: generation={}".format(generation))
+        log_event("ARM_COMMIT", connection_id=connection_id, generation=generation)
         return True
     return False
 
 
-def forward_valid_frames(received, connection):
+def forward_valid_frames(received, connection, connection_id=None):
     """Process allow-listed frames; return unconsumed bytes and drive count."""
     forwarded = 0
     offset = 0
@@ -478,7 +515,7 @@ def forward_valid_frames(received, connection):
                     break
                 generation = unsigned_32(received[offset + 2 : offset + 6])
                 offset += CONTROL_ARM_SIZE
-                handle_arm(connection, generation)
+                handle_arm(connection, generation, connection_id)
                 continue
             if diagnostic == GENERATION_DRIVE:
                 if received_size - offset < GENERATION_DRIVE_SIZE:
@@ -516,7 +553,7 @@ def forward_valid_frames(received, connection):
                     or abs(right) > OI_MAX_WHEEL_SPEED_MM_S
                     or abs(left) > OI_MAX_WHEEL_SPEED_MM_S
                     or not ALLOW_NONZERO_DRIVE
-                    or not motion_latch.accepts(generation, sequence)
+                    or not motion_latch.accepts(generation, sequence, connection_id)
                 ):
                     print(
                         "drive rejected: lock/generation/sequence generation={} sequence={}".format(
@@ -609,6 +646,8 @@ def enforce_arm_watchdog():
     armed_at = motion_latch.armed_at_ms
     uart_written = uart_write_exact(STOP)
     motion_latch.latch_stop()
+    log_event("ARM_EXPIRED", generation=motion_latch.highest_generation)
+    log_event("STOP_LATCHED", reason="arm_expired")
     print(
         "ARM watchdog STOP: fired_at_ms={} armed_at_ms={} "
         "elapsed_ms={} uart_written={}".format(
@@ -632,7 +671,13 @@ def make_server():
 
 
 def receive_client(connection, address):
+    global connection_counter
+    connection_counter += 1
+    connection_id = connection_counter
     connected_at = time.ticks_ms()
+    log_event("TCP_ACCEPT", connection_id=connection_id, peer=address)
+    if connection_id > 1:
+        log_event("TCP_RECONNECT", connection_id=connection_id)
     print("connected: {} at_ms={}".format(address, connected_at))
     disconnect_reason = "PC closed the connection"
 
@@ -640,7 +685,9 @@ def receive_client(connection, address):
         # Keep the socket blocking until OI initialization is complete.  The host
         # must not send wheel commands before receiving this readiness marker.
         roomba_init()
-        ready_sent = send_all(connection, READY)
+        log_event("READY_TX_BEGIN", connection_id=connection_id, planned=len(READY))
+        ready_sent = send_all(connection, READY, "READY_TX", connection_id)
+        log_event("READY_TX_OK", connection_id=connection_id, sent=ready_sent)
         ready_at = time.ticks_ms()
         print("relay ready: at_ms={} bytes={}".format(ready_at, ready_sent))
         connection.setblocking(False)
@@ -657,7 +704,7 @@ def receive_client(connection, address):
                 if data:
                     first_frame_received = True
                     received.extend(data)
-                    received, forwarded = forward_valid_frames(received, connection)
+                    received, forwarded = forward_valid_frames(received, connection, connection_id)
                     if forwarded:
                         # Invalid, incomplete, diagnostic, ARM, and legacy STOP
                         # data cannot extend motion. Only a CRC-checked,
@@ -686,10 +733,13 @@ def receive_client(connection, address):
             disconnect_reason = "Wi-Fi disconnected"
     except OSError as error:
         disconnect_reason = "client setup error: {}".format(error)
+        log_event("EXCEPTION", connection_id=connection_id, error=error)
     finally:
         stop_roomba()
         motion_latch.latch_stop()
+        log_event("STOP_LATCHED", connection_id=connection_id, reason=disconnect_reason)
         connection.close()
+        log_event("TCP_CLOSE", connection_id=connection_id, reason=disconnect_reason)
         print(
             "disconnect STOP: at_ms={} reason={}".format(
                 time.ticks_ms(), disconnect_reason

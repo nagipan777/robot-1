@@ -39,26 +39,33 @@ class PicoRelaySafetyTests(unittest.TestCase):
         receive_client = source[source.index("def receive_client"):]
         self.assertLess(
             receive_client.index("roomba_init()"),
-            receive_client.index("send_all(connection, READY)"),
+            receive_client.index('send_all(connection, READY, "READY_TX", connection_id)'),
         )
         self.assertLess(
-            receive_client.index("send_all(connection, READY)"),
+            receive_client.index('send_all(connection, READY, "READY_TX", connection_id)'),
             receive_client.index("connection.setblocking(False)"),
         )
         self.assertIn("disconnect STOP: at_ms=", receive_client)
         self.assertIn('"connected: {} at_ms={}"', receive_client)
         self.assertIn('"relay ready: at_ms={} bytes={}"', receive_client)
         self.assertIn("roomba_init()", receive_client)
-        self.assertIn("send_all(connection, READY)", receive_client)
+        self.assertIn(
+            'send_all(connection, READY, "READY_TX", connection_id)',
+            receive_client,
+        )
         self.assertIn("diagnostics remain locked", source)
         self.assertNotIn("if not roomba_init():", receive_client)
 
     def test_only_arm_or_generation_drive_extends_watchdog(self):
         source = SOURCE.read_text()
-        self.assertIn("def forward_valid_frames(received, connection):", source)
+        self.assertIn(
+            "def forward_valid_frames(received, connection, connection_id=None):",
+            source,
+        )
         self.assertIn("abs(right) > OI_MAX_WHEEL_SPEED_MM_S", source)
         self.assertIn(
-            "received, forwarded = forward_valid_frames(received, connection)", source
+            "received, forwarded = forward_valid_frames(received, connection, connection_id)",
+            source,
         )
         self.assertIn("return bytearray(received[offset:]), forwarded", source)
         self.assertIn("Only a CRC-checked,", source)
