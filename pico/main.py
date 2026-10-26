@@ -111,6 +111,7 @@ class MotionLatch:
         self.last_sequence = 0
         self.armed_at_ms = None
         self.pending_generation = None
+        self.pending_at_ms = None
         self.connection_id = None
         self.pending_connection_id = None
 
@@ -120,6 +121,7 @@ class MotionLatch:
         self.highest_generation = generation
         self.generation = None
         self.pending_generation = generation
+        self.pending_at_ms = time.ticks_ms()
         self.connection_id = None
         self.pending_connection_id = connection_id
         self.last_sequence = 0
@@ -135,8 +137,11 @@ class MotionLatch:
             or connection_id != self.pending_connection_id
         ):
             return False
+        if time.ticks_diff(time.ticks_ms(), self.pending_at_ms) >= COMMAND_TIMEOUT_MS:
+            return False
         self.generation = generation
         self.pending_generation = None
+        self.pending_at_ms = None
         self.connection_id = connection_id
         self.pending_connection_id = None
         self.last_sequence = 0
@@ -173,6 +178,7 @@ class MotionLatch:
             self.state = self.STOPPED
             self.generation = None
             self.pending_generation = None
+            self.pending_at_ms = None
             self.connection_id = None
             self.pending_connection_id = None
             self.armed_at_ms = None
@@ -181,6 +187,7 @@ class MotionLatch:
         self.state = self.LATCHED_STOP
         self.generation = None
         self.pending_generation = None
+        self.pending_at_ms = None
         self.connection_id = None
         self.pending_connection_id = None
         self.armed_at_ms = None
@@ -484,7 +491,6 @@ def handle_arm(connection, generation, connection_id=None):
         stop_roomba()
         motion_latch.latch_stop()
         print("ARM ACK send failed: status={} error={}".format(status, error))
-        log_event("ACK_TX_ERROR", connection_id=connection_id, generation=generation, error=error)
         log_event("STOP_LATCHED", connection_id=connection_id, reason="arm_ack_error")
         raise
     print("ARM ACK sent: bytes={} status={}".format(sent, status))
@@ -493,6 +499,8 @@ def handle_arm(connection, generation, connection_id=None):
         if not motion_latch.commit(generation, connection_id):
             stop_roomba()
             motion_latch.latch_stop()
+            log_event("EXCEPTION", connection_id=connection_id, generation=generation, error="arm_commit_failed")
+            log_event("STOP_LATCHED", connection_id=connection_id, reason="arm_commit_failed")
             raise OSError("ARM commit failed after ACK")
         print("ARM committed: generation={}".format(generation))
         log_event("ARM_COMMIT", connection_id=connection_id, generation=generation)

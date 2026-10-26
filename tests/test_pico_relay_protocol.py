@@ -89,6 +89,22 @@ class DisconnectAfterConnection(FakeConnection):
         return super().send(data)
 
 
+class IdleClientConnection(FakeConnection):
+    def __init__(self):
+        super().__init__()
+        self.blocking = True
+        self.closed = False
+
+    def setblocking(self, value):
+        self.blocking = value
+
+    def recv(self, _size):
+        raise OSError(errno.EAGAIN)
+
+    def close(self):
+        self.closed = True
+
+
 class FakeTime:
     def __init__(self):
         self.now = 0
@@ -560,6 +576,25 @@ class PicoRelayProtocolTests(unittest.TestCase):
         self.assertIsNone(relay.motion_latch.connection_id)
         self.assertEqual(uart.writes[-1], relay.STOP)
 
+    def test_arm_pending_expiry_during_ack_prevents_commit(self):
+        relay, uart = load_relay()
+        relay.ALLOW_NONZERO_DRIVE = True
+
+        class DelayedAckConnection(FakeConnection):
+            def send(self, data):
+                relay.time.now += relay.COMMAND_TIMEOUT_MS
+                return super().send(data)
+
+        with self.assertRaisesRegex(OSError, "ARM commit failed after ACK"):
+            relay.forward_valid_frames(
+                bytearray(self.arm_frame(relay, 63)), DelayedAckConnection(), 13
+            )
+
+        self.assertEqual(relay.motion_latch.state, relay.MotionLatch.LATCHED_STOP)
+        self.assertIsNone(relay.motion_latch.pending_generation)
+        self.assertIsNone(relay.motion_latch.pending_at_ms)
+        self.assertEqual(uart.writes[-1], relay.STOP)
+
     def test_old_connection_id_cannot_drive_new_session(self):
         relay, uart = load_relay()
         relay.ALLOW_NONZERO_DRIVE = True
@@ -646,6 +681,37 @@ class PicoRelayProtocolTests(unittest.TestCase):
 
         self.assertFalse(relay.motion_latch.arm_expired(299))
         self.assertTrue(relay.motion_latch.arm_expired(300))
+
+    def test_idle_client_is_closed_after_first_frame_deadline_with_stop_latched(self):
+        relay, uart = load_relay()
+        connection = IdleClientConnection()
+        output = io.StringIO()
+
+        with redirect_stdout(output):
+            relay.receive_client(connection, ("127.0.0.1", 12345))
+
+        self.assertTrue(connection.closed)
+        self.assertEqual(relay.motion_latch.state, relay.MotionLatch.LATCHED_STOP)
+        self.assertEqual(uart.writes[-1], relay.STOP)
+        self.assertIn("TCP_ACCEPT", output.getvalue())
+        self.assertIn("READY_TX_OK", output.getvalue())
+        self.assertIn("STOP_LATCHED", output.getvalue())
+        self.assertIn("TCP_CLOSE", output.getvalue())
+        self.assertIn("reason=first frame timeout", output.getvalue())
+
+    def test_next_idle_client_is_logged_as_reconnect_and_also_released(self):
+        relay, _uart = load_relay()
+        first = IdleClientConnection()
+        second = IdleClientConnection()
+        relay.receive_client(first, ("127.0.0.1", 10001))
+        output = io.StringIO()
+
+        with redirect_stdout(output):
+            relay.receive_client(second, ("127.0.0.1", 10002))
+
+        self.assertTrue(second.closed)
+        self.assertIn("TCP_RECONNECT", output.getvalue())
+        self.assertIn("connection_id=2", output.getvalue())
 
     def test_sequence_replay_and_bad_crc_are_rejected_without_uart_write(self):
         relay, uart = load_relay()

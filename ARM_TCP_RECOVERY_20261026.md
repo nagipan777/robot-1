@@ -97,7 +97,7 @@ Automated non-driving result on 2026-10-26:
 
 - Python syntax compilation: PASS.
 - ARM/TCP and related safety suites after connection-ID instrumentation:
-  **92/92 PASS**.
+  **99/99 PASS**.
 - Covered: `send(None)` retry, partial ACK, finite send timeout, ACK failure
   STOP/latch, generation burn/replay rejection, STOP-during-ACK commit denial,
   no-first-Drive 500 ms expiry, host 0/7 timeout reporting, prior-generation
@@ -105,11 +105,20 @@ Automated non-driving result on 2026-10-26:
   fixed-duration drive-session logic.
 - New boundary coverage includes ACK chunk sizes 1 through 6, disconnect after
   three ACK bytes, and rejection of a Drive tagged with the old connection ID.
+- `ARM_PENDING` stores its own monotonic reservation time. Commit rechecks the
+  connection, generation, state, and the unchanged 500 ms deadline; a delayed
+  ACK completion cannot authorize motion.
 - Full discovery collected 280 tests. Eight vision/data modules could not load
   because the Mac environment lacks NumPy/OpenCV; three pre-existing
   `test_ip` discovery-name collisions also failed. These are outside the ARM
   path. The two initially affected ARM/READY assertions were corrected and
   are included in the 87 passing tests.
+
+Later final discovery superseded those interim counts: Mac collected 292 tests
+with 281 passing and 11 environment/discovery errors. A network-disabled Colima
+container with NumPy/OpenCV collected 313 tests with 312 passing. Its sole
+remaining error is the container's OpenCV 4.6 lacking the newer ArUco APIs used
+by an existing vision test; no speculative vision workaround was retained.
 
 ## Remaining attended validation and GO status
 
@@ -164,3 +173,34 @@ Not measured unattended: Pico Wi-Fi connect/READY/ACK latency, RSSI, firmware
 version, Pico memory/reboot history, ping loss, and real Mac-versus-container
 paths to port 9000. Those require the operator to confirm Pico power, deployed
 code, physical disconnection, and locks first.
+
+Additional unrecorded-payload stress runs (summary only) completed after the
+JSON baselines:
+
+| Stress run | Mac native mock | Colima/Docker mock |
+|---|---:|---:|
+| Normal connections | 5,000/5,000 | 5,000/5,000 |
+| Normal timeouts / partials | 0 / 0 | 0 / 0 |
+| Fault-matrix connections | 400 | 400 |
+| Expected complete / timeout / partial | 200 / 100 / 100 | 200 / 100 / 100 |
+| Classification invariant violations | 0 | 0 |
+
+## Wi-Fi, TCP, sleep, and recovery audit
+
+- Pico code already attempts `wlan.config(pm=0xA11140)` to disable Wi-Fi power
+  saving. It is best-effort because MicroPython support varies by firmware.
+- Mac clients set `TCP_NODELAY`; Pico accepted sockets do not. Pico-side
+  `TCP_NODELAY` remains a one-variable live experiment, not an unverified code
+  change.
+- Pico ACK/READY sends have a 100 ms bounded send loop. Initial client data,
+  committed-but-unused ARM, and Drive traffic use independent 500 ms checks.
+- Every client `finally` path writes STOP, clears pending/armed connection state,
+  closes the accepted socket, and records `TCP_CLOSE`.
+- The old `send(None)` bug affected both seven-byte ARM ACK and six-byte READY.
+  It therefore explains a common mechanism for the observed ARM `0/7` loss and
+  subsequent READY `0/6` failures; real-Pico confirmation is still required.
+- Colima uses a Docker bridge at `172.18.0.0/16` behind the macOS
+  Virtualization Framework. No Docker network settings were changed.
+- At audit time macOS AC idle sleep was disabled, but low-power mode was on;
+  battery idle sleep was one minute. Incident-time power/sleep history is not
+  available, so sleep is not assigned as the root cause.

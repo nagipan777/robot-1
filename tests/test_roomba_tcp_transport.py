@@ -1,6 +1,7 @@
 import socket
 import struct
 import threading
+import time
 import unittest
 
 from simulation.roomba_tcp_transport import (
@@ -284,6 +285,32 @@ class RoombaTcpTransportTests(unittest.TestCase):
                 transport.connect()
             self.assertFalse(transport.connected)
 
+    def test_ready_zero_bytes_timeout_reports_exact_progress(self):
+        def silent(connection, _received):
+            time.sleep(0.1)
+
+        with LocalRelayServer([silent]) as server:
+            transport = RoombaTcpTransport(
+                server.host, server.port, connect_timeout=0.05
+            )
+            with self.assertRaisesRegex(
+                RoombaDiagnosticError, r"relay READY timed out: received 0/6 bytes"
+            ):
+                transport.connect()
+            self.assertFalse(transport.connected)
+
+    def test_ready_partial_then_close_reports_exact_progress(self):
+        def partial(connection, _received):
+            connection.sendall(b"REA")
+
+        with LocalRelayServer([partial]) as server:
+            transport = RoombaTcpTransport(server.host, server.port)
+            with self.assertRaisesRegex(
+                ConnectionError, r"relay READY \(3/6 bytes; raw=524541\)"
+            ):
+                transport.connect()
+            self.assertFalse(transport.connected)
+
     def test_twist_conversion_limit_and_right_left_order(self):
         expected_drive = drive_direct_packet(31, 50)
         expected = with_crc(
@@ -373,6 +400,47 @@ class RoombaTcpTransportTests(unittest.TestCase):
             )
             transport.close(send_stop=False)
         self.assertEqual(server.received, [STOP_PACKET, expected_arm, expected_drive])
+
+    def test_arm_partial_ack_close_reports_three_of_seven_and_revokes(self):
+        generation = 1235
+
+        def partial_ack(connection, received):
+            connection.sendall(RELAY_READY)
+            received.append(receive_exact(connection, len(STOP_PACKET)))
+            received.append(receive_exact(connection, 6))
+            connection.sendall(bytes([DIAGNOSTIC_MAGIC, CONTROL_ARM_RESPONSE, 1]))
+
+        with LocalRelayServer([partial_ack]) as server:
+            transport = RoombaTcpTransport(server.host, server.port)
+            transport.connect()
+            with self.assertRaisesRegex(
+                ConnectionError, r"ARM response \(3/7 bytes; raw=d78401\)"
+            ):
+                transport.arm(generation)
+            self.assertIsNone(transport.armed_generation)
+            transport.close(send_stop=False)
+
+    def test_old_generation_ack_is_rejected_without_authorization(self):
+        requested = 1236
+
+        def old_ack(connection, received):
+            connection.sendall(RELAY_READY)
+            received.append(receive_exact(connection, len(STOP_PACKET)))
+            received.append(receive_exact(connection, 6))
+            connection.sendall(
+                bytes([DIAGNOSTIC_MAGIC, CONTROL_ARM_RESPONSE, 1])
+                + struct.pack(">I", requested - 1)
+            )
+
+        with LocalRelayServer([old_ack]) as server:
+            transport = RoombaTcpTransport(server.host, server.port)
+            transport.connect()
+            with self.assertRaisesRegex(
+                RoombaDiagnosticError, "highest_generation=1235"
+            ):
+                transport.arm(requested)
+            self.assertIsNone(transport.armed_generation)
+            transport.close(send_stop=False)
 
     def test_drive_ack_failure_is_rejected_and_sequence_is_not_advanced(self):
         generation = 7

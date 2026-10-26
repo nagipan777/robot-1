@@ -48,14 +48,22 @@ are unperformed.
 ## D. Test results
 
 - Syntax checks: PASS.
-- Focused unit/host/mock regression: **92/92 PASS**.
+- Focused unit/host/mock regression: **99/99 PASS**.
 - Mac normal mock: **300/300 complete**.
 - Colima normal mock: **300/300 complete**.
 - Fault matrices: expected 25 timeout + 25 partial + 50 complete in each.
+- Additional stress: Mac and Colima each passed 5,000/5,000 normal connections;
+  each 400-cycle fault matrix classified 200 complete, 100 timeout, and 100
+  partial-close cases without invariant violations.
 - Real Pico non-driving TCP: **not run**.
 - Real Roomba UART/STOP ACK: **not run**; Mini-DIN was reported disconnected.
-- Full discovery: not clean on the Mac because NumPy/OpenCV are absent and
-  pre-existing `test_ip` module-name collision errors remain.
+- Full discovery on Mac collected 292 tests: 281 passed; eight import errors
+  require NumPy/OpenCV and three errors came from ambiguous top-level discovery.
+- Full discovery in a network-disabled Colima test container collected 313
+  tests: **312 passed**. The one remaining test requires newer OpenCV ArUco APIs
+  (`generateImageMarker`/`ArucoDetector`) than container OpenCV 4.6 provides.
+  A guessed old-API fallback was rejected after it caused a native exit 139;
+  no unrelated vision compatibility change was retained.
 
 ## E. Safety
 
