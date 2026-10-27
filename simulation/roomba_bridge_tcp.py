@@ -135,6 +135,7 @@ class RoombaBridgeTcp(Node):
         self.watchdog_preflight_logged = False
         self.arm_deadline = 0.0
         self.bounded_drive_rejection_logged = False
+        self.idle_stop_sent = False
         self.create_subscription(Twist, self.command_topic, self.on_cmd, COMMAND_QOS)
         self.create_subscription(UInt32, self.arm_topic, self.on_arm, COMMAND_QOS)
         # Correctness does not depend on this timer: every Drive has an
@@ -166,6 +167,8 @@ class RoombaBridgeTcp(Node):
         self.clear_motion_authorization()
         try:
             self.transport.connect()
+            # connect() has already placed one STOP on this new TCP session.
+            self.idle_stop_sent = True
             self.get_logger().info(
                 f"Connected to Pico W {self.host}:{self.port}; relay READY; STOP sent"
             )
@@ -347,7 +350,8 @@ class RoombaBridgeTcp(Node):
                 and time.monotonic() < self.arm_deadline
             ):
                 return
-            self.send_stop()
+            if not self.idle_stop_sent:
+                self.send_stop()
             return
 
         if command != (0.0, 0.0) and time.monotonic() >= self.next_safe_check:
@@ -388,6 +392,7 @@ class RoombaBridgeTcp(Node):
                 max_speed_mm_s=self.max_speed_mm_s,
                 deadline_monotonic=self.drive_session_limiter.deadline,
             )
+            self.idle_stop_sent = False
             if self.drive_session_limiter.enabled:
                 left, right = twist_to_wheel_speeds(
                     command[0],
@@ -463,6 +468,7 @@ class RoombaBridgeTcp(Node):
             self.latency_trace.record("stop_tcp_send_begin", monotonic=started)
         try:
             self.transport.send_stop()
+            self.idle_stop_sent = True
             if record_timing:
                 returned = time.monotonic()
                 self.latency_trace.record(
@@ -500,6 +506,7 @@ class RoombaBridgeTcp(Node):
         self.get_logger().warn(f"送信失敗、再接続します: {error}")
         self.clear_command()
         self.clear_motion_authorization()
+        self.idle_stop_sent = False
         # A missing, corrupt, or negative per-Drive ACK is a safety failure.
         # Attempt one raw STOP before closing; close() suppresses socket errors.
         self.transport.close(send_stop=True)

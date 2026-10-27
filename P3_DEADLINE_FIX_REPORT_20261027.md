@@ -30,6 +30,8 @@ P2ログでは、セッション開始 `163453.037197` から期限検知ログ
 
 - タイマー周期は既存の50 msを維持する。100 Hz化はアイドルSTOPとログを毎秒100回へ
   増幅したため撤回した。期限の正しさはタイマー周期に依存させない。
+- 接続時または停止遷移時のSTOPは一度だけ送る。停止状態の20 Hz tickでは同一STOPを
+  再送せず、Picoの`normal STOP forwarded`ログとTCP負荷を増幅しない。
 - Safe照会後、Drive dispatch直前に固定期限を再検査する。
 - transport層でもsocket送信直前に絶対monotonic期限を検査し、期限以上なら非ゼロDriveを
   送らず `DriveDeadlineExpired` とする。

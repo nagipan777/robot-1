@@ -228,6 +228,18 @@ class RoombaBridgeTcpIntegrationTests(unittest.TestCase):
         self.assertIn("if record_timing:", send_stop)
         self.assertIn("self.send_stop(record_timing=True)", expire)
 
+    def test_idle_stop_is_one_shot_until_nonzero_drive(self):
+        source = (ROOT / "simulation" / "roomba_bridge_tcp.py").read_text()
+        tick = source[
+            source.index("    def tick(self):") : source.index("    def tick_watchdog_test")
+        ]
+        send_stop = source[
+            source.index("    def send_stop") : source.index("    def expire_bounded_drive")
+        ]
+        self.assertIn("if not self.idle_stop_sent:", tick)
+        self.assertIn("self.idle_stop_sent = False", tick)
+        self.assertIn("self.idle_stop_sent = True", send_stop)
+
 
 if __name__ == "__main__":
     unittest.main()
