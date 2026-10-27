@@ -137,10 +137,11 @@ class RoombaBridgeTcp(Node):
         self.bounded_drive_rejection_logged = False
         self.create_subscription(Twist, self.command_topic, self.on_cmd, COMMAND_QOS)
         self.create_subscription(UInt32, self.arm_topic, self.on_arm, COMMAND_QOS)
-        # 10 ms monitoring reduces ordinary detection jitter; correctness does
-        # not depend on this timer because every Drive has an absolute pre-send
-        # deadline check and Pico enforces its own independent session bound.
-        self.create_timer(0.01, self.tick)  # 100Hz
+        # Correctness does not depend on this timer: every Drive has an
+        # absolute pre-send deadline check and Pico has an independent bound.
+        # Keep the established 20 Hz rate to avoid multiplying idle STOP TCP
+        # traffic and diagnostic output.
+        self.create_timer(0.05, self.tick)  # 20Hz
         self.connect()
 
         if not self.drive_enabled:
@@ -455,23 +456,26 @@ class RoombaBridgeTcp(Node):
             )
             self.send_stop()
 
-    def send_stop(self):
+    def send_stop(self, *, record_timing=False):
         self.drive_session_limiter.latch_stop()
-        started = time.monotonic()
-        self.latency_trace.record("stop_tcp_send_begin", monotonic=started)
+        started = time.monotonic() if record_timing else None
+        if record_timing:
+            self.latency_trace.record("stop_tcp_send_begin", monotonic=started)
         try:
             self.transport.send_stop()
-            returned = time.monotonic()
-            self.latency_trace.record(
-                "stop_tcp_send_return",
-                monotonic=returned,
-                elapsed_s=returned - started,
-            )
-            self.get_logger().info(
-                "STOP TCP send returned: begin=%.6f returned=%.6f elapsed=%.6fs; "
-                "Pico UART completion and physical stop are separate evidence"
-                % (started, returned, returned - started)
-            )
+            if record_timing:
+                returned = time.monotonic()
+                self.latency_trace.record(
+                    "stop_tcp_send_return",
+                    monotonic=returned,
+                    elapsed_s=returned - started,
+                )
+                self.get_logger().info(
+                    "deadline STOP TCP send returned: begin=%.6f returned=%.6f "
+                    "elapsed=%.6fs; Pico UART completion and physical stop are "
+                    "separate evidence"
+                    % (started, returned, returned - started)
+                )
         except (OSError, ConnectionError) as error:
             self.handle_send_failure(error)
 
@@ -490,7 +494,7 @@ class RoombaBridgeTcp(Node):
                 max(0.0, detected_at - deadline) if deadline is not None else 0.0,
             )
         )
-        self.send_stop()
+        self.send_stop(record_timing=True)
 
     def handle_send_failure(self, error):
         self.get_logger().warn(f"送信失敗、再接続します: {error}")

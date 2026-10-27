@@ -28,12 +28,13 @@ P2ログでは、セッション開始 `163453.037197` から期限検知ログ
 
 ### ホスト
 
-- タイマー周期を50 msから10 msへ短縮した。
+- タイマー周期は既存の50 msを維持する。100 Hz化はアイドルSTOPとログを毎秒100回へ
+  増幅したため撤回した。期限の正しさはタイマー周期に依存させない。
 - Safe照会後、Drive dispatch直前に固定期限を再検査する。
 - transport層でもsocket送信直前に絶対monotonic期限を検査し、期限以上なら非ゼロDriveを
   送らず `DriveDeadlineExpired` とする。
 - TCP送信時間とDrive ACK待ち時間を別々にtraceへ記録する。
-- STOPについて次を別イベントとして記録する。
+- 期限STOPについてだけ次を別イベントとして記録する。通常のアイドルSTOPでは出力しない。
   - `bounded drive deadline detected`: ホスト期限検知
   - `stop_tcp_send_begin`: TCP STOP送信開始
   - `stop_tcp_send_return`: OSへのTCP送信要求の復帰

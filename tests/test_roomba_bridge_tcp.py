@@ -215,7 +215,18 @@ class RoombaBridgeTcpIntegrationTests(unittest.TestCase):
         self.assertLess(tick.index("query_oi_mode(live=True)"), tick.index("permits_dispatch()"))
         self.assertIn("deadline_monotonic=self.drive_session_limiter.deadline", tick)
         self.assertIn("dispatch_checked_at >= deadline_monotonic", transport)
-        self.assertIn("self.create_timer(0.01, self.tick)", bridge)
+        self.assertIn("self.create_timer(0.05, self.tick)", bridge)
+
+    def test_routine_idle_stop_does_not_emit_deadline_timing_log(self):
+        source = (ROOT / "simulation" / "roomba_bridge_tcp.py").read_text()
+        send_stop = source[
+            source.index("    def send_stop") : source.index("    def expire_bounded_drive")
+        ]
+        expire = source[
+            source.index("    def expire_bounded_drive") : source.index("    def handle_send_failure")
+        ]
+        self.assertIn("if record_timing:", send_stop)
+        self.assertIn("self.send_stop(record_timing=True)", expire)
 
 
 if __name__ == "__main__":
