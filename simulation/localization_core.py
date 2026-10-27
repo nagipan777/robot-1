@@ -51,6 +51,8 @@ class WheelUpdate:
     angular_velocity: float
     timestamp: float
     initialized: bool
+    left_delta: int = 0
+    right_delta: int = 0
 
 
 class WheelOdometry:
@@ -103,8 +105,19 @@ class WheelOdometry:
         self.previous = (left, right)
         self.last_timestamp = timestamp
         return WheelUpdate(
-            self.pose, distance / dt, delta_yaw / dt, timestamp, True
+            self.pose,
+            distance / dt,
+            delta_yaw / dt,
+            timestamp,
+            True,
+            dl_ticks,
+            dr_ticks,
         )
+
+    def resynchronize(self):
+        """Keep pose but require the next valid counts to establish a baseline."""
+        self.previous = None
+        self.last_timestamp = None
 
 
 @dataclass(frozen=True)

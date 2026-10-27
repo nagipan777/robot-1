@@ -461,6 +461,46 @@ case "${1:-help}" in
     "${compose[@]}" exec -T simulator bash -lc \
       'source /opt/create3_ws/install/setup.bash; exec /usr/local/bin/localization-preview-test --ros-args --params-file /etc/localization-preview.yaml'
     ;;
+  odometry-dryrun-e2e)
+    if [ "$#" -ne 1 ]; then
+      echo "Usage: $0 odometry-dryrun-e2e" >&2
+      exit 2
+    fi
+    if ! colima -p create3 status >/dev/null 2>&1; then
+      colima start create3 --cpu 2 --memory 4 --disk 24 --vm-type vz \
+        --mount none --activate=false --ssh-config=false
+    fi
+    image=robot-odometry-dryrun
+    artifact_dir="$(cd .. && pwd)/artifacts/odometry_dryrun/e2e"
+    container="robot-odometry-dryrun-e2e-$$"
+    mkdir -p "$artifact_dir"
+    docker --context colima-create3 build \
+      -f Dockerfile.odometry-dryrun -t "$image" .
+    docker --context colima-create3 create --name "$container" --network none \
+      "$image" bash -lc '
+        set -euo pipefail
+        set +u
+        source /opt/ros/jazzy/setup.bash
+        set -u
+        mkdir -p /output
+        odometry-ros-e2e \
+          --input /etc/odometry-dryrun-e2e.csv \
+          --output-csv /output/ros_odometry.csv \
+          --output-json /output/ros_e2e_summary.json
+        run-odometry-dryrun \
+          --input /etc/odometry-dryrun-e2e.csv \
+          --output-dir /output/offline
+      '
+    cleanup_odometry_dryrun() {
+      docker --context colima-create3 rm -f "$container" >/dev/null 2>&1 || true
+    }
+    trap cleanup_odometry_dryrun EXIT INT TERM
+    docker --context colima-create3 start -a "$container"
+    docker --context colima-create3 cp "$container:/output/." "$artifact_dir"
+    cleanup_odometry_dryrun
+    trap - EXIT INT TERM
+    echo "PASS: odometry dry-run E2E artifacts saved to $artifact_dir"
+    ;;
   localization-hardware-live)
     echo 'Refusing hardware-live localization: UART/TCP 9000 is intentionally not implemented in this phase.' >&2
     exit 1

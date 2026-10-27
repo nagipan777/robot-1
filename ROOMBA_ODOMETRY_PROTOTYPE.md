@@ -102,10 +102,11 @@ unchanged.
 ## Verification on 2026-10-27
 
 - Python syntax checks: PASS.
-- Odometry, localization, ARM/TCP, STOP, watchdog and driver regression:
-  **156/156 PASS**.
-- Docker/ROS runtime attempt: not run because the Colima Docker socket was not
-  present. This was an environment availability failure before image build,
-  not a node failure.
+- Focused odometry dry-run/configuration tests: **29/29 PASS**.
+- Full odometry, localization, Navigation, ARM/TCP, STOP, watchdog and driver
+  regression: **338/338 PASS**.
+- Isolated Docker/ROS runtime E2E: **PASS** with `--network none`; six replay
+  inputs produced five `/roomba/odom` messages and correctly suppressed one
+  synthetic timeout sample. See `ODOMETRY_DRYRUN_REPORT_20261027.md`.
 - Real Pico/Roomba encoder acquisition: not run and no protocol change was
   deployed.

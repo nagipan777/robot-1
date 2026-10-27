@@ -11,6 +11,7 @@ wheel_odometry:
     wheel_diameter_m: 0.072
     wheel_separation_m: 0.235
     max_tick_delta: 2000
+    max_time_gap_s: 1.0
 
 localization_fusion:
   ros__parameters:

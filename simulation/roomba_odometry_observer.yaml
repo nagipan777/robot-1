@@ -13,3 +13,6 @@ wheel_odometry:
     wheel_diameter_m: 0.072
     wheel_separation_m: 0.235
     max_tick_delta: 2000
+    max_time_gap_s: 1.0
+    pose_covariance_diagonal: [0.0025, 0.0025, 999.0, 999.0, 999.0, 0.01]
+    twist_covariance_diagonal: [0.01, 999.0, 999.0, 999.0, 999.0, 0.04]

@@ -60,6 +60,10 @@ class LocalizationConfigTests(unittest.TestCase):
         self.assertNotIn('create_publisher(PoseStamped, "/robot/pose"', node)
         self.assertNotIn("import socket", node)
         self.assertNotIn("import serial", node)
+        rviz = (ROOT / "simulation/roomba_odometry.rviz").read_text()
+        self.assertIn("Fixed Frame: roomba_odom", rviz)
+        self.assertIn("Value: /roomba/odom", rviz)
+        self.assertNotIn("TFDisplay", rviz)
 
 
 if __name__ == "__main__":

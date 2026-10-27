@@ -1,0 +1,16 @@
+{
+  "passed": true,
+  "data_kind": "synthetic",
+  "real_uart_used": false,
+  "input_samples": 6,
+  "odom_messages": 5,
+  "topic": "/roomba/odom",
+  "message_type": "nav_msgs/msg/Odometry",
+  "frame_id": "roomba_odom",
+  "child_frame_id": "roomba_base_link",
+  "final_x_m": 0.014225914477476762,
+  "final_y_m": 5.382445805469353e-05,
+  "final_yaw_rad": 0.007567063798289347,
+  "tf_published": false,
+  "navigation_connected": false
+}

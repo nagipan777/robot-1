@@ -72,6 +72,13 @@ COPY localization_core.py /usr/local/bin/localization_core.py
 COPY wheel_odometry_node.py /usr/local/bin/wheel-odometry-node
 COPY wheel_odometry_node.py /usr/local/bin/wheel_odometry_node.py
 COPY roomba_odometry_observer.yaml /etc/roomba-odometry-observer.yaml
+COPY odometry_dryrun_core.py /usr/local/bin/odometry_dryrun_core.py
+COPY odometry_replay_node.py /usr/local/bin/odometry-replay-node
+COPY odometry_aruco_ab.py /usr/local/bin/odometry-aruco-ab
+COPY run_odometry_dryrun.py /usr/local/bin/run-odometry-dryrun
+COPY roomba_odometry.rviz /etc/roomba-odometry.rviz
+COPY odometry_ros_e2e.py /usr/local/bin/odometry-ros-e2e
+COPY odometry_dryrun_e2e.csv /etc/odometry-dryrun-e2e.csv
 COPY localization_fusion_node.py /usr/local/bin/localization-fusion-node
 COPY localization_fusion_node.py /usr/local/bin/localization_fusion_node.py
 COPY localization_preview_test.py /usr/local/bin/localization-preview-test
@@ -106,6 +113,9 @@ RUN chmod +x /usr/local/bin/start-simulation /usr/local/bin/webcam-bridge \
     /usr/local/bin/dry-run-pose-publisher \
     /usr/local/bin/roomba-bridge-tcp /usr/local/bin/roomba-wheel-lift-test \
     /usr/local/bin/aruco-pose-publisher /usr/local/bin/wheel-odometry-node \
+    /usr/local/bin/odometry-replay-node \
+    /usr/local/bin/odometry-aruco-ab /usr/local/bin/run-odometry-dryrun \
+    /usr/local/bin/odometry-ros-e2e \
     /usr/local/bin/localization-fusion-node /usr/local/bin/localization-preview-test \
     /usr/local/bin/recording-status /usr/local/bin/presentation-visualizer \
     && python3 /tmp/add-litter-marker-display.py \

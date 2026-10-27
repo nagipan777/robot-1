@@ -1,0 +1,17 @@
+{
+  "comparison_type": "relative_trajectory",
+  "matched_samples": 5,
+  "unmatched_odometry_samples": 0,
+  "position_rmse_m": 1.3448879873633154e-16,
+  "yaw_rmse_rad": 7.620946456013688e-18,
+  "max_position_error_m": 1.9892022455876546e-16,
+  "max_yaw_error_rad": 1.0408340855860843e-17,
+  "terminal_position_error_m": 7.676118959387558e-17,
+  "terminal_yaw_error_rad": 1.0408340855860843e-17,
+  "mean_abs_time_offset_s": 0.0,
+  "max_abs_time_offset_s": 0.0,
+  "data_kind": "synthetic",
+  "input": "/etc/odometry-dryrun-e2e.csv",
+  "real_uart_used": false,
+  "nonzero_drive_sent": false
+}

@@ -1,0 +1,55 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Alpha: 0.5
+      Cell Size: 0.1
+      Class: rviz_default_plugins/Grid
+      Color: 160; 160; 164
+      Enabled: true
+      Name: Grid
+      Plane: XY
+      Plane Cell Count: 40
+    - Angle Tolerance: 0.01
+      Class: rviz_default_plugins/Odometry
+      Enabled: true
+      Keep: 500
+      Name: Roomba Odometry
+      Position Tolerance: 0.001
+      Shape:
+        Alpha: 1
+        Axes Length: 0.08
+        Axes Radius: 0.008
+        Color: 30; 144; 255
+        Head Length: 0.03
+        Head Radius: 0.015
+        Shaft Length: 0.05
+        Shaft Radius: 0.008
+        Value: Axes
+      Topic:
+        Depth: 10
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /roomba/odom
+      Value: true
+  Enabled: true
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: roomba_odom
+    Frame Rate: 30
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/MoveCamera
+  Transformation:
+    Current:
+      Class: rviz_default_plugins/TF
+  Value: true
+Views:
+  Current:
+    Class: rviz_default_plugins/TopDownOrtho
+    Name: Top Down
+    Scale: 80
