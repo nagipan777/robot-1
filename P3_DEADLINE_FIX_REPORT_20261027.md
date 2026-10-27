@@ -3,9 +3,10 @@
 ## 判定
 
 - ソフトウェア模擬試験: **PASS**
-- Pico実機への修正版配備: **未実施**
-- Roomba実機での0.4秒遵守・UART STOP完了・物理停止: **未確認**
-- P3実機走行: **NO-GOを維持**（下記の有人再試験がPASSするまで）
+- Pico実機への修正版配備: **PASS**
+- Roomba実機での0.4秒遵守・STOP・物理停止: **PASS**
+- P3期限ブロッカー: **解除**
+- AI連動P3全体: 別途YOLO・ArUco・Navigationの試行固有ゲート確認が必要
 
 ## 原因と遅延内訳
 
@@ -51,12 +52,13 @@ P2ログでは、セッション開始 `163453.037197` から期限検知ログ
 - 期限検知とUART STOP完了を別々に出力する。
 - 既存500 ms command watchdog、ARM世代／接続ID、STOPラッチ、速度上限は変更していない。
 
-Picoのループは5 ms pollingであり、UART処理やACK送信中のスケジューリング遅延は実機ログで
-測る必要がある。そのため「400 msで物理停止済み」とはまだ判定しない。
+Picoの独立期限そのものを意図的に発火させる異常系実機試験は未実施である。今回の正常系では
+ホストPublisherのSTOPが0.4秒より先に到達した。独立期限の境界・UART STOP・ラッチはPico
+モックで検証し、実機のバックアップ条件として維持する。
 
 ## 模擬・回帰試験
 
-対象116件を実行し **116/116 PASS**:
+重複STOP抑止と非走行dry-runを含む対象119件を実行し **119/119 PASS**:
 
 ```text
 python3 -m unittest \
@@ -64,9 +66,10 @@ python3 -m unittest \
   tests.test_roomba_bridge_tcp \
   tests.test_pico_relay_protocol \
   tests.test_pico_relay \
-  tests.test_differential_drive
+  tests.test_differential_drive \
+  tests.test_deadline_dry_run
 
-Ran 116 tests in 0.216s
+Ran 119 tests in 0.706s
 OK
 ```
 
@@ -80,11 +83,36 @@ OK
 - ACK部分送信、ARM世代、再接続、STOP、20 mm/s速度変換の回帰PASS
 
 全テスト自動探索320件では今回と無関係なローカル依存不足（`numpy`, `cv2`）および既存の
-`test_ip` import名衝突により11件が収集エラーとなった。期限関連対象116件には失敗なし。
+`test_ip` import名衝突により11件が収集エラーとなった。期限関連対象119件には失敗なし。
 
-## 次の有人最小試験（1件のみ）
+## 非走行E2E
 
-修正版 `pico/main.py` を配備し、安全ゲートを再確認したうえで、両輪浮上状態における
-20 mm/s・最大0.4秒の単発試験を1回だけ行う。ホストtraceの期限検知／STOP送信開始・復帰、
-Picoの期限検知／UART STOP完了、動画での物理停止を同一試行で保存する。期限後Driveが1件でも
-あればFAILとし、その試行では再ARM・再Driveしない。
+`simulation/deadline_dry_run.py`を実行し、意図的な約38.6 msのexecutor遅延後も期限後の
+socket送信が0件であることを確認した。ARMと実機Driveは送信していない。成果物は
+`artifacts/deadline_dryrun/20261027/`へ保存した。
+
+## ログ増幅インシデントと修正
+
+初回修正でタイマーを100 Hzへ変更し、共通`send_stop()`へ毎回INFOログを追加したため、
+アイドル状態でもSTOPとログが最大100回/秒発生した。物理的な非ゼロDriveではなかったが、
+TCP負荷と停止操作の視認性を悪化させるため使用禁止とした。
+
+100 Hz化を撤回し、期限ログを期限STOPだけへ限定した。さらに停止中の同一STOPを一度だけに
+抑止した。修正後の実通信STOP限定診断では、READY、ACK `0x07`、左右0、Safe 2の表示後に
+ログが静止した。
+
+## 有人両輪浮上E2E
+
+重複STOP修正版を使用し、左右20 mm/s・最大0.4秒の単発試験を実施した。
+
+- ARM generation: `1793101962`
+- Drive ACK: `0x03`、sequence 1〜3
+- 左右要求速度: 20 / 20 mm/s
+- セッション開始: `169453.620066`
+- 正常STOP受信・送信: `169454.010324`
+- 経過: **0.390258秒**（0.4秒以内）
+- 期限後Drive: 0件
+- 人間の目視: 両輪停止、異音なし、再発進なし
+
+終了後に`ALLOW_NONZERO_DRIVE=False`へ戻して再起動し、STOP ACK `0x07`、左右0、OI Safe 2、
+ログ静止を再確認した。ブリッジを終了し、Pico USBを外し、LED消灯と両輪停止を確認した。
