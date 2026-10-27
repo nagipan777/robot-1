@@ -414,6 +414,10 @@ class VisionTurnController(Node):
     def publish_target(self, confidence, detection_timestamp):
         stamp = self.get_clock().now().to_msg()
         frame = self.get_parameter("detection_target_frame").value
+        # Direct candidate processing may reject and clear self.target_* before
+        # this method returns (for example, the 50 cm robot guard). Preserve
+        # immutable values for the evidence log.
+        pixel_x, pixel_y = self.target_pixel
         target_x, target_y = self.target_odom
 
         point = PointStamped()
@@ -435,7 +439,6 @@ class VisionTurnController(Node):
 
         now = time.monotonic()
         if now - self.last_target_log_at >= 1.0:
-            pixel_x, pixel_y = self.target_pixel
             self.get_logger().info(
                 f"litter pixel=({pixel_x:.1f}, {pixel_y:.1f}) -> "
                 f"{frame}=({target_x:.3f}, {target_y:.3f}), confidence={confidence:.3f}"

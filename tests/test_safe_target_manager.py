@@ -69,6 +69,20 @@ class SafeTargetManagerTests(unittest.TestCase):
         self.assertEqual(self.manager.consider((1.20, 2.0), 0.10), "new")
         self.assertFalse(self.manager.suspended)
 
+    def test_suspended_same_target_is_observation_only_reconfirmation_candidate(self):
+        self.manager.consider((1.0, 2.0), 0.20)
+        self.manager.suspend()
+        self.assertTrue(
+            self.manager.reconfirmation_candidate((1.05, 2.02), 0.20)
+        )
+        self.assertEqual(
+            self.manager.consider((1.05, 2.02), 0.20), "blocked_same"
+        )
+        self.assertTrue(self.manager.suspended)
+        self.assertFalse(
+            self.manager.reconfirmation_candidate((1.30, 2.0), 0.20)
+        )
+
     def test_invalid_change_distance_is_rejected(self):
         with self.assertRaises(ValueError):
             self.manager.consider((1.0, 2.0), -0.01)
@@ -89,6 +103,8 @@ class SafeTargetManagerTests(unittest.TestCase):
         self.assertEqual(require_fresh_timestamp(99.5, 100.0, 1.0), 99.5)
         with self.assertRaisesRegex(ValueError, "stale detection"):
             require_fresh_timestamp(98.0, 100.0, 1.0)
+        with self.assertRaisesRegex(ValueError, "stale detection"):
+            require_fresh_timestamp(100.2, 100.0, 1.0)
 
 
 class SpatialConfirmationFilterTests(unittest.TestCase):

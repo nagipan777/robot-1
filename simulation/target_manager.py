@@ -4,7 +4,7 @@ import math
 def require_fresh_timestamp(timestamp, now, max_age):
     timestamp = float(timestamp)
     age = now - timestamp
-    if not math.isfinite(timestamp) or age > max_age:
+    if not math.isfinite(timestamp) or age < -0.1 or age > max_age:
         raise ValueError(
             f"stale detection timestamp: age={age:.3f}s, limit={max_age:.3f}s"
         )
@@ -128,6 +128,22 @@ class SafeTargetManager:
 
     def suspend(self):
         self.suspended = True
+
+    def reconfirmation_candidate(self, target, change_distance):
+        """Report a stopped same-target candidate without releasing the latch.
+
+        This is observation-only: callers still need explicit session/ARM
+        authorization before any physical restart.
+        """
+        if self.reference_target is None or not self.suspended:
+            return False
+        return (
+            math.hypot(
+                float(target[0]) - self.reference_target[0],
+                float(target[1]) - self.reference_target[1],
+            )
+            <= float(change_distance)
+        )
 
     def reset(self):
         self.reference_target = None
