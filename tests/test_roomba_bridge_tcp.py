@@ -205,8 +205,17 @@ class RoombaBridgeTcpIntegrationTests(unittest.TestCase):
         self.assertIn('declare_parameter("max_drive_session_duration", 0.0)', source)
         self.assertIn("self.drive_session_limiter.poll()", source)
         self.assertIn("self.expire_bounded_drive()", source)
-        self.assertIn("bounded drive deadline reached: STOP sent, ARM revoked", source)
+        self.assertIn("bounded drive deadline detected: STOP send starts next", source)
         self.assertIn("bounded Drive ACK: status=0x03", source)
+
+    def test_deadline_is_checked_after_safe_query_and_at_tcp_dispatch(self):
+        bridge = (ROOT / "simulation" / "roomba_bridge_tcp.py").read_text()
+        transport = (ROOT / "simulation" / "roomba_tcp_transport.py").read_text()
+        tick = bridge[bridge.index("    def tick(self):") : bridge.index("    def tick_watchdog_test")]
+        self.assertLess(tick.index("query_oi_mode(live=True)"), tick.index("permits_dispatch()"))
+        self.assertIn("deadline_monotonic=self.drive_session_limiter.deadline", tick)
+        self.assertIn("dispatch_checked_at >= deadline_monotonic", transport)
+        self.assertIn("self.create_timer(0.01, self.tick)", bridge)
 
 
 if __name__ == "__main__":

@@ -7,6 +7,7 @@ import unittest
 from simulation.roomba_tcp_transport import (
     CommandState,
     DriveSessionLimiter,
+    DriveDeadlineExpired,
     DIAGNOSTIC_MAGIC,
     DIAGNOSTIC_OI_MODE,
     DIAGNOSTIC_OI_MODE_LIVE,
@@ -146,6 +147,36 @@ class RoombaTcpTransportTests(unittest.TestCase):
 
         limiter.arm()
         self.assertEqual(limiter.observe_nonzero(), "started")
+
+    def test_dispatch_permission_boundary_is_strict(self):
+        now = [30.0]
+        limiter = DriveSessionLimiter(0.4, lambda: now[0])
+        limiter.arm()
+        self.assertEqual(limiter.observe_nonzero(), "started")
+        self.assertEqual(limiter.deadline, 30.4)
+        now[0] = 30.399999
+        self.assertTrue(limiter.permits_dispatch())
+        now[0] = 30.4
+        self.assertFalse(limiter.permits_dispatch())
+        self.assertTrue(limiter.latched)
+
+    def test_transport_rejects_expired_drive_before_socket_send(self):
+        class NoSendSocket:
+            def sendall(self, _packet):
+                raise AssertionError("expired Drive reached socket")
+
+        transport = RoombaTcpTransport("unused", 9000)
+        transport.socket = NoSendSocket()
+        transport.armed_generation = 123
+        with self.assertRaises(DriveDeadlineExpired):
+            transport.send_twist(
+                0.02,
+                0.0,
+                track_width_m=0.235,
+                max_speed_mm_s=20,
+                deadline_monotonic=time.monotonic() - 0.001,
+            )
+        self.assertEqual(transport.drive_sequence, 0)
 
     def test_bounded_drive_session_rejects_late_callback_without_timer_poll(self):
         now = [20.0]

@@ -43,6 +43,10 @@ class RoombaDiagnosticError(Exception):
     """Raised when a fixed diagnostic request is rejected or incomplete."""
 
 
+class DriveDeadlineExpired(RoombaDiagnosticError):
+    """Raised before TCP dispatch when a bounded-drive deadline has passed."""
+
+
 class SafeModeGate:
     """Latch motion permission only after STOP and OI Safe are confirmed."""
 
@@ -191,6 +195,22 @@ class DriveSessionLimiter:
         ):
             return False
         self.latched = True
+        return True
+
+    @property
+    def deadline(self):
+        if not self.enabled or self.started_at is None:
+            return None
+        return self.started_at + self.duration_s
+
+    def permits_dispatch(self):
+        if not self.enabled:
+            return True
+        if self.latched or self.started_at is None:
+            return False
+        if self.clock() >= self.deadline:
+            self.latched = True
+            return False
         return True
 
     def latch_stop(self):
@@ -409,7 +429,15 @@ class RoombaTcpTransport:
             raise RoombaDiagnosticError("invalid OI mode: {}".format(mode))
         return mode
 
-    def send_twist(self, linear_x, angular_z, *, track_width_m, max_speed_mm_s):
+    def send_twist(
+        self,
+        linear_x,
+        angular_z,
+        *,
+        track_width_m,
+        max_speed_mm_s,
+        deadline_monotonic=None,
+    ):
         self._trace(
             "transport_send_start",
             linear_x=linear_x,
@@ -434,13 +462,35 @@ class RoombaTcpTransport:
             + struct.pack(">II", self.armed_generation, sequence)
             + packet
         )
+        # This is deliberately adjacent to send_packet: a delayed ROS callback,
+        # live Safe query, or trace write must never dispatch a late Drive.
+        dispatch_checked_at = time.monotonic()
+        if (
+            deadline_monotonic is not None
+            and dispatch_checked_at >= deadline_monotonic
+        ):
+            self._trace(
+                "tcp_drive_deadline_rejected",
+                generation=self.armed_generation,
+                sequence=sequence,
+                deadline_monotonic=deadline_monotonic,
+                checked_at=dispatch_checked_at,
+                overdue_s=dispatch_checked_at - deadline_monotonic,
+            )
+            raise DriveDeadlineExpired(
+                "non-zero drive rejected before TCP send: deadline exceeded by "
+                "{:.6f}s".format(dispatch_checked_at - deadline_monotonic)
+            )
+        send_started = time.monotonic()
         self.send_packet(with_crc(payload))
+        send_returned = time.monotonic()
         self._trace(
             "tcp_drive_sent",
             generation=self.armed_generation,
             sequence=sequence,
             right_mm_s=right,
             left_mm_s=left,
+            send_elapsed_s=send_returned - send_started,
         )
         response = self._receive_exact(
             self.socket, DRIVE_RESPONSE_SIZE, operation="Drive ACK"
@@ -450,6 +500,7 @@ class RoombaTcpTransport:
             generation=self.armed_generation,
             sequence=sequence,
             raw=response.hex(),
+            ack_wait_elapsed_s=time.monotonic() - send_returned,
         )
         if len(response) != DRIVE_RESPONSE_SIZE:
             raise RoombaDiagnosticError("invalid Drive ACK size")

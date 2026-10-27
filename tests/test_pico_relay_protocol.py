@@ -808,6 +808,46 @@ class PicoRelayProtocolTests(unittest.TestCase):
         self.assertIn("elapsed_ms=", output.getvalue())
         self.assertIn("uart_written=True", output.getvalue())
 
+    def test_independent_drive_session_deadline_stops_and_latches(self):
+        relay, uart = load_relay()
+        relay.ALLOW_NONZERO_DRIVE = True
+        connection = FakeConnection()
+        relay.forward_valid_frames(bytearray(self.arm_frame(relay, 81)), connection)
+        relay.forward_valid_frames(
+            bytearray(self.drive_frame(relay, 81, sequence=1)), connection
+        )
+        started_at = relay.motion_latch.drive_started_at_ms
+        relay.time.now = started_at + relay.DRIVE_SESSION_TIMEOUT_MS
+
+        output = io.StringIO()
+        with redirect_stdout(output):
+            stopped = relay.enforce_drive_session_deadline(False)
+
+        self.assertTrue(stopped)
+        self.assertEqual(relay.motion_latch.state, relay.MotionLatch.LATCHED_STOP)
+        self.assertEqual(uart.writes[-1], relay.STOP)
+        self.assertIn("session deadline detected", output.getvalue())
+        self.assertIn("UART STOP complete", output.getvalue())
+
+    def test_expired_pico_session_rejects_next_drive_before_uart(self):
+        relay, uart = load_relay()
+        relay.ALLOW_NONZERO_DRIVE = True
+        connection = FakeConnection()
+        relay.forward_valid_frames(bytearray(self.arm_frame(relay, 82)), connection)
+        relay.forward_valid_frames(
+            bytearray(self.drive_frame(relay, 82, sequence=1)), connection
+        )
+        writes_before = list(uart.writes)
+        relay.time.now = (
+            relay.motion_latch.drive_started_at_ms
+            + relay.DRIVE_SESSION_TIMEOUT_MS
+        )
+        _remaining, forwarded = relay.forward_valid_frames(
+            bytearray(self.drive_frame(relay, 82, sequence=2)), connection
+        )
+        self.assertEqual(forwarded, 0)
+        self.assertEqual(uart.writes, writes_before)
+
 
 if __name__ == "__main__":
     unittest.main()

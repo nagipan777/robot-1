@@ -26,6 +26,7 @@ from differential_drive import twist_to_wheel_speeds
 from latency_trace import LatencyTrace
 from roomba_tcp_transport import (
     CommandState,
+    DriveDeadlineExpired,
     DriveSessionLimiter,
     RoombaDiagnosticError,
     RoombaTcpTransport,
@@ -136,7 +137,10 @@ class RoombaBridgeTcp(Node):
         self.bounded_drive_rejection_logged = False
         self.create_subscription(Twist, self.command_topic, self.on_cmd, COMMAND_QOS)
         self.create_subscription(UInt32, self.arm_topic, self.on_arm, COMMAND_QOS)
-        self.create_timer(0.05, self.tick)  # 20Hz
+        # 10 ms monitoring reduces ordinary detection jitter; correctness does
+        # not depend on this timer because every Drive has an absolute pre-send
+        # deadline check and Pico enforces its own independent session bound.
+        self.create_timer(0.01, self.tick)  # 100Hz
         self.connect()
 
         if not self.drive_enabled:
@@ -357,6 +361,17 @@ class RoombaBridgeTcp(Node):
             if command is None:
                 self.send_stop()
                 return
+        if (
+            command != (0.0, 0.0)
+            and not self.drive_session_limiter.permits_dispatch()
+        ):
+            self.latency_trace.record(
+                "deadline_detected_before_dispatch",
+                deadline_monotonic=self.drive_session_limiter.deadline,
+                detected_at=time.monotonic(),
+            )
+            self.expire_bounded_drive()
+            return
 
         try:
             self.latency_trace.record(
@@ -370,6 +385,7 @@ class RoombaBridgeTcp(Node):
                 command[1],
                 track_width_m=self.wheel_base,
                 max_speed_mm_s=self.max_speed_mm_s,
+                deadline_monotonic=self.drive_session_limiter.deadline,
             )
             if self.drive_session_limiter.enabled:
                 left, right = twist_to_wheel_speeds(
@@ -386,6 +402,7 @@ class RoombaBridgeTcp(Node):
         except (
             OSError,
             ConnectionError,
+            DriveDeadlineExpired,
             RoombaDiagnosticError,
             TypeError,
             ValueError,
@@ -440,18 +457,38 @@ class RoombaBridgeTcp(Node):
 
     def send_stop(self):
         self.drive_session_limiter.latch_stop()
+        started = time.monotonic()
+        self.latency_trace.record("stop_tcp_send_begin", monotonic=started)
         try:
             self.transport.send_stop()
+            returned = time.monotonic()
+            self.latency_trace.record(
+                "stop_tcp_send_return",
+                monotonic=returned,
+                elapsed_s=returned - started,
+            )
+            self.get_logger().info(
+                "STOP TCP send returned: begin=%.6f returned=%.6f elapsed=%.6fs; "
+                "Pico UART completion and physical stop are separate evidence"
+                % (started, returned, returned - started)
+            )
         except (OSError, ConnectionError) as error:
             self.handle_send_failure(error)
 
     def expire_bounded_drive(self):
         self.clear_command()
         self.bounded_drive_rejection_logged = False
+        detected_at = time.monotonic()
+        deadline = self.drive_session_limiter.deadline
         self.get_logger().warn(
-            "bounded drive deadline reached: STOP sent, ARM revoked; "
-            "limit=%.3fs monotonic=%.6f"
-            % (self.max_drive_session_duration, time.monotonic())
+            "bounded drive deadline detected: STOP send starts next, ARM revoked; "
+            "limit=%.3fs deadline=%.6f detected=%.6f detection_late=%.6fs"
+            % (
+                self.max_drive_session_duration,
+                deadline or 0.0,
+                detected_at,
+                max(0.0, detected_at - deadline) if deadline is not None else 0.0,
+            )
         )
         self.send_stop()
 

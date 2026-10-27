@@ -16,6 +16,9 @@ PORT = 9000
 
 BAUD = 115200
 COMMAND_TIMEOUT_MS = 500
+# Independent, non-refreshing cap from the first accepted non-zero Drive.
+# This is separate from the 500 ms inter-command watchdog.
+DRIVE_SESSION_TIMEOUT_MS = 400
 WIFI_CONNECT_TIMEOUT_MS = 30000
 WIFI_RETRY_MS = 3000
 ACCEPT_TIMEOUT_S = 1
@@ -128,6 +131,7 @@ class MotionLatch:
         self.highest_generation = 0
         self.last_sequence = 0
         self.armed_at_ms = None
+        self.drive_started_at_ms = None
         self.pending_generation = None
         self.pending_at_ms = None
         self.connection_id = None
@@ -144,6 +148,7 @@ class MotionLatch:
         self.pending_connection_id = connection_id
         self.last_sequence = 0
         self.armed_at_ms = None
+        self.drive_started_at_ms = None
         self.state = self.ARM_PENDING
         return True
 
@@ -164,6 +169,7 @@ class MotionLatch:
         self.pending_connection_id = None
         self.last_sequence = 0
         self.armed_at_ms = time.ticks_ms()
+        self.drive_started_at_ms = None
         self.state = self.ARMED
         return True
 
@@ -178,11 +184,22 @@ class MotionLatch:
             and generation == self.generation
             and connection_id == self.connection_id
             and sequence > self.last_sequence
+            and not self.drive_session_expired(time.ticks_ms())
         )
 
     def record(self, sequence):
         self.last_sequence = sequence
         self.armed_at_ms = None
+        if self.drive_started_at_ms is None:
+            self.drive_started_at_ms = time.ticks_ms()
+
+    def drive_session_expired(self, now_ms):
+        return (
+            self.state == self.ARMED
+            and self.drive_started_at_ms is not None
+            and time.ticks_diff(now_ms, self.drive_started_at_ms)
+            >= DRIVE_SESSION_TIMEOUT_MS
+        )
 
     def arm_expired(self, now_ms):
         return (
@@ -200,6 +217,7 @@ class MotionLatch:
             self.connection_id = None
             self.pending_connection_id = None
             self.armed_at_ms = None
+            self.drive_started_at_ms = None
 
     def latch_stop(self):
         self.state = self.LATCHED_STOP
@@ -209,6 +227,7 @@ class MotionLatch:
         self.connection_id = None
         self.pending_connection_id = None
         self.armed_at_ms = None
+        self.drive_started_at_ms = None
 
 
 motion_latch = MotionLatch()
@@ -668,6 +687,33 @@ def enforce_command_watchdog(last_command, stopped):
     return True
 
 
+def enforce_drive_session_deadline(stopped):
+    """Latch STOP at a fixed deadline that Drive traffic cannot refresh."""
+    fired_at = time.ticks_ms()
+    if stopped or not motion_latch.drive_session_expired(fired_at):
+        return stopped
+    started_at = motion_latch.drive_started_at_ms
+    print(
+        "session deadline detected: fired_at_ms={} started_at_ms={} elapsed_ms={}".format(
+            fired_at, started_at, time.ticks_diff(fired_at, started_at)
+        )
+    )
+    uart_started_at = time.ticks_ms()
+    uart_written = uart_write_exact(STOP)
+    uart_completed_at = time.ticks_ms()
+    motion_latch.latch_stop()
+    print(
+        "session deadline UART STOP complete: started_at_ms={} completed_at_ms={} "
+        "elapsed_ms={} uart_written={}".format(
+            uart_started_at,
+            uart_completed_at,
+            time.ticks_diff(uart_completed_at, uart_started_at),
+            uart_written,
+        )
+    )
+    return True
+
+
 def enforce_arm_watchdog():
     fired_at = time.ticks_ms()
     if not motion_latch.arm_expired(fired_at):
@@ -755,6 +801,7 @@ def receive_client(connection, address):
                 break
 
             enforce_arm_watchdog()
+            stopped = enforce_drive_session_deadline(stopped)
             stopped = enforce_command_watchdog(last_command, stopped)
 
             time.sleep_ms(5)
