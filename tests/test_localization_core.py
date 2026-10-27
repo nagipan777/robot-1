@@ -4,6 +4,7 @@ import unittest
 from simulation.localization_core import (
     Pose2D,
     PoseFusion,
+    RelativePoseComparator,
     WheelOdometry,
     decode_encoder_response,
     encoder_delta,
@@ -136,6 +137,26 @@ class FusionTests(unittest.TestCase):
         decision = evaluate_robot_guard((1.3, 1.0), (pose.x, pose.y), 0.5)
         self.assertFalse(decision["accepted"])
         self.assertEqual(decision["reason"], "robot_proximity")
+
+
+class RelativePoseComparatorTests(unittest.TestCase):
+    def test_aruco_is_compared_as_relative_motion_not_map_coordinates(self):
+        comparator = RelativePoseComparator()
+        comparator.observe_aruco(Pose2D(2.0, 3.0, math.pi / 2), 10.0)
+        comparator.observe_aruco(Pose2D(2.0, 4.0, math.pi / 2), 11.0)
+        result = comparator.compare(Pose2D(1.0, 0.0, 0.0), 11.1)
+        self.assertAlmostEqual(result.aruco_relative.x, 1.0)
+        self.assertAlmostEqual(result.aruco_relative.y, 0.0)
+        self.assertAlmostEqual(result.position_error_m, 0.0)
+        self.assertAlmostEqual(result.yaw_error_rad, 0.0)
+        self.assertAlmostEqual(result.aruco_age_s, 0.1)
+
+    def test_missing_and_non_monotonic_aruco_are_handled(self):
+        comparator = RelativePoseComparator()
+        self.assertIsNone(comparator.compare(Pose2D(), 1.0))
+        comparator.observe_aruco(Pose2D(), 2.0)
+        with self.assertRaisesRegex(ValueError, "increase"):
+            comparator.observe_aruco(Pose2D(), 2.0)
 
 
 if __name__ == "__main__":

@@ -71,6 +71,7 @@ COPY aruco_pose.yaml /etc/aruco-pose.yaml
 COPY localization_core.py /usr/local/bin/localization_core.py
 COPY wheel_odometry_node.py /usr/local/bin/wheel-odometry-node
 COPY wheel_odometry_node.py /usr/local/bin/wheel_odometry_node.py
+COPY roomba_odometry_observer.yaml /etc/roomba-odometry-observer.yaml
 COPY localization_fusion_node.py /usr/local/bin/localization-fusion-node
 COPY localization_fusion_node.py /usr/local/bin/localization_fusion_node.py
 COPY localization_preview_test.py /usr/local/bin/localization-preview-test
