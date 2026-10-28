@@ -212,3 +212,25 @@ does not change the deadline, STOP packet, socket lifecycle, or safety gates.
 Focused regression remained **66/66 PASS** and the full project regression
 remained **369/369 PASS**. This logging patch has not been used for another
 physical Drive trial.
+
+## Final AI-path non-driving rehearsal
+
+After the attended deadline trial and lock restoration, the isolated live
+camera path was repeated with the v2 model at confidence 0.50 and `imgsz=960`.
+Pico, ARM, Gazebo, Create3, and the physical Roomba topic were absent;
+`control_enabled=false`, `dry_run_enabled=true`, and adapter mode `dry_run` were
+reconfirmed.
+
+- Mask-only detections were repeatedly accepted at confidence 0.61--0.71 while
+  ArUco ID 0 remained present.
+- Navigation produced 52 observed non-zero candidates and the adapter produced
+  the same 52 dry-run candidates in the first capture.
+- A gated repeat recorded 489 Navigation and 489 matching dry-run non-zero
+  candidates before complete mask removal.
+- ROS then reported `detections=[]` with ArUco ID 0 still present.
+- Navigation and dry-run each emitted zero STOP; over the following five
+  seconds the non-zero counts remained 489 to 489 with no restart.
+- The camera producer, container, and network were stopped and removed.
+
+Final AI-path non-driving rehearsal: **PASS**. This is not another physical
+Drive trial and does not change the attended evidence above.
