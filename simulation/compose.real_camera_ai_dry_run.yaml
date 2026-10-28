@@ -1,0 +1,7 @@
+services:
+  simulator:
+    command:
+      - /usr/bin/supervisord
+      - -n
+      - -c
+      - /etc/supervisor/real-camera-ai-dry-run.conf

@@ -23,6 +23,7 @@ COPY worlds/room.sdf /opt/create3_ws/install/irobot_create_gz_bringup/share/irob
 COPY worlds/room_camera.sdf /opt/create3_ws/install/irobot_create_gz_bringup/share/irobot_create_gz_bringup/worlds/room_camera.sdf
 COPY supervisord.conf /etc/supervisor/conf.d/create3.conf
 COPY supervisord.real_camera_aruco_minimal.conf /etc/supervisor/real-camera-aruco-minimal.conf
+COPY supervisord.real_camera_ai_dry_run.conf /etc/supervisor/real-camera-ai-dry-run.conf
 COPY start-simulation.sh /usr/local/bin/start-simulation
 COPY start-camera-bridge.sh /usr/local/bin/start-camera-bridge
 COPY start-camera-activation.sh /usr/local/bin/start-camera-activation
@@ -92,6 +93,7 @@ COPY vision_controller.integration.yaml /etc/vision-controller.integration.yaml
 COPY vision_controller.real_dry_run.yaml /etc/vision-controller.real-dry-run.yaml
 COPY vision_controller.real_aruco_dry_run.yaml /etc/vision-controller.real-aruco-dry-run.yaml
 COPY e2e_dry_run_recorder.py /usr/local/bin/e2e-dry-run-recorder
+COPY ai_dry_run_gate_test.py /usr/local/bin/ai-dry-run-gate-test
 COPY dry_run_pose_publisher.py /usr/local/bin/dry-run-pose-publisher
 COPY add_litter_marker_display.py /tmp/add-litter-marker-display.py
 RUN chmod +x /usr/local/bin/start-simulation /usr/local/bin/webcam-bridge \
@@ -110,7 +112,7 @@ RUN chmod +x /usr/local/bin/start-simulation /usr/local/bin/webcam-bridge \
     /usr/local/bin/unstamped-cmd-relay /usr/local/bin/roomba-dry-run-adapter \
     /usr/local/bin/cmd-vel-output-adapter \
     /usr/local/bin/pico-dry-run-bridge \
-    /usr/local/bin/e2e-dry-run-recorder \
+    /usr/local/bin/e2e-dry-run-recorder /usr/local/bin/ai-dry-run-gate-test \
     /usr/local/bin/dry-run-pose-publisher \
     /usr/local/bin/roomba-bridge-tcp /usr/local/bin/roomba-wheel-lift-test \
     /usr/local/bin/aruco-pose-publisher /usr/local/bin/wheel-odometry-node \

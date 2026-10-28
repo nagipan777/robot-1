@@ -13,6 +13,11 @@ minimal_aruco_compose=(
   -f compose.yaml
   -f compose.real_camera_aruco_minimal.yaml
 )
+ai_dry_run_compose=(
+  docker --context colima-create3 compose
+  -f compose.yaml
+  -f compose.real_camera_ai_dry_run.yaml
+)
 case "${1:-help}" in
   up)
     if ! colima -p create3 status >/dev/null 2>&1; then
@@ -118,6 +123,27 @@ case "${1:-help}" in
     ;;
   real-camera-aruco-minimal-down)
     "${minimal_aruco_compose[@]}" down
+    ;;
+  real-camera-ai-dry-run-up)
+    if [ "$#" -ne 1 ]; then
+      echo "Usage: $0 real-camera-ai-dry-run-up" >&2
+      exit 2
+    fi
+    if ! colima -p create3 status >/dev/null 2>&1; then
+      colima start create3 --cpu 2 --memory 4 --disk 24 --vm-type vz \
+        --mount none --activate=false --ssh-config=false
+    fi
+    "${ai_dry_run_compose[@]}" up -d --build --force-recreate
+    echo 'Real-camera AI dry-run started.'
+    echo 'Only webcam, ArUco, controller, and dry-run adapter are configured.'
+    echo 'Gazebo/Create3/Pico/ARM and physical Roomba output are absent.'
+    ;;
+  real-camera-ai-dry-run-status)
+    "${ai_dry_run_compose[@]}" exec -T simulator \
+      supervisorctl -c /etc/supervisor/real-camera-ai-dry-run.conf status
+    ;;
+  real-camera-ai-dry-run-down)
+    "${ai_dry_run_compose[@]}" down
     ;;
   nav-test-up)
     if colima -p create3 status >/dev/null 2>&1; then
@@ -784,6 +810,6 @@ case "${1:-help}" in
     "${compose[@]}" cp simulator:/tmp/oscillation_summary.json ../artifacts/oscillation_diagnostics/summary.json
     ;;
   *)
-    echo "Usage: $0 {up|camera-up|vision-integration-up|real-camera-dry-run-up [PICO_IP [X Y YAW]]|real-camera-aruco-dry-run-up|real-camera-aruco-minimal-up|real-camera-aruco-minimal-status|real-camera-aruco-minimal-down|nav-test-up|down|stop|shell|status|cmd-adapter [dry_run|gazebo|roomba] [INPUT_TOPIC]|pico-cmd-dry-run PICO_IP [PORT]|e2e-record {A|B|C|D|E} [SECONDS]|dry-run-pose X Y YAW|camera-status|litter-add X Y|litter-move X Y|litter-remove|logs|teleop|roomba-tcp PICO_IP [PORT]|roomba-tcp-diagnostic PICO_IP [PORT]|roomba-short-e-bridge PICO_IP WHEELS_LIFTED [PORT]|roomba-tcp-watchdog PICO_IP WHEELS_LIFTED [PORT]|roomba-wheel-lift-test MODE [WHEELS_LIFTED]|aruco-pose|aruco-pose-start|aruco-pose-stop|localization-wheel-preview|localization-fusion-preview|localization-preview-test|localization-hardware-live|test-marker|record-status|presentation-layout|replay-create3-trajectory [RESULT_JSON [SPEED]]|ros-status|control-turn|control-approach|control-off|known-target-test|known-target-abort-test|multi-target-test|synthetic-coordinate-test|yolo-navigation-test|oscillation-diagnostics [SECONDS]}"
+    echo "Usage: $0 {up|camera-up|vision-integration-up|real-camera-dry-run-up [PICO_IP [X Y YAW]]|real-camera-aruco-dry-run-up|real-camera-aruco-minimal-up|real-camera-aruco-minimal-status|real-camera-aruco-minimal-down|real-camera-ai-dry-run-up|real-camera-ai-dry-run-status|real-camera-ai-dry-run-down|nav-test-up|down|stop|shell|status|cmd-adapter [dry_run|gazebo|roomba] [INPUT_TOPIC]|pico-cmd-dry-run PICO_IP [PORT]|e2e-record {A|B|C|D|E} [SECONDS]|dry-run-pose X Y YAW|camera-status|litter-add X Y|litter-move X Y|litter-remove|logs|teleop|roomba-tcp PICO_IP [PORT]|roomba-tcp-diagnostic PICO_IP [PORT]|roomba-short-e-bridge PICO_IP WHEELS_LIFTED [PORT]|roomba-tcp-watchdog PICO_IP WHEELS_LIFTED [PORT]|roomba-wheel-lift-test MODE [WHEELS_LIFTED]|aruco-pose|aruco-pose-start|aruco-pose-stop|localization-wheel-preview|localization-fusion-preview|localization-preview-test|localization-hardware-live|test-marker|record-status|presentation-layout|replay-create3-trajectory [RESULT_JSON [SPEED]]|ros-status|control-turn|control-approach|control-off|known-target-test|known-target-abort-test|multi-target-test|synthetic-coordinate-test|yolo-navigation-test|oscillation-diagnostics [SECONDS]}"
     ;;
 esac
