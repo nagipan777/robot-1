@@ -127,11 +127,162 @@ class RoombaTcpTransportTests(unittest.TestCase):
             [
                 "transport_send_start",
                 "tcp_drive_sent",
+                "tcp_drive_ack_wait_start",
                 "tcp_drive_ack_received",
                 "tcp_drive_ack_validated",
             ],
         )
         self.assertTrue(all(fields["generation"] == generation for _, fields in events))
+
+    def test_deadline_interrupts_delayed_drive_ack_and_poisoned_session(self):
+        class DelayedSocket:
+            def __init__(self, delay_s):
+                self.delay_s = delay_s
+                self.ready_at = None
+                self.timeout = 2.0
+                self.sent = []
+                self.closed = False
+
+            def sendall(self, packet):
+                self.sent.append(packet)
+                if self.ready_at is None:
+                    self.ready_at = time.monotonic() + self.delay_s
+
+            def gettimeout(self):
+                return self.timeout
+
+            def settimeout(self, timeout):
+                self.timeout = timeout
+
+            def recv(self, _size):
+                remaining = self.ready_at - time.monotonic()
+                if remaining > self.timeout:
+                    time.sleep(self.timeout)
+                    raise socket.timeout()
+                time.sleep(max(0.0, remaining))
+                raise AssertionError("delayed ACK must not outlive the deadline")
+
+            def close(self):
+                self.closed = True
+
+        for delay_s in (0.050, 0.181, 0.300):
+            with self.subTest(delay_s=delay_s):
+                events = []
+                connection = DelayedSocket(delay_s)
+                transport = RoombaTcpTransport(
+                    "unused",
+                    9000,
+                    trace=lambda stage, **fields: events.append((stage, fields)),
+                )
+                transport.socket = connection
+                transport.armed_generation = 41
+                deadline = time.monotonic() + 0.025
+                with self.assertRaises(DriveDeadlineExpired):
+                    transport.send_twist(
+                        0.02,
+                        0.0,
+                        track_width_m=0.235,
+                        max_speed_mm_s=20,
+                        deadline_monotonic=deadline,
+                    )
+
+                stages = [stage for stage, _ in events]
+                self.assertIn("tcp_deadline_stop_begin", stages)
+                self.assertIn("tcp_deadline_stop_return", stages)
+                stop_event = next(
+                    fields
+                    for stage, fields in events
+                    if stage == "tcp_deadline_stop_begin"
+                )
+                self.assertLess(stop_event["stop_started"] - deadline, 0.020)
+                self.assertEqual(connection.sent[-1], STOP_PACKET)
+                self.assertEqual(len(connection.sent), 2)  # one Drive, one STOP
+                self.assertTrue(connection.closed)
+                self.assertFalse(transport.connected)
+                self.assertIsNone(transport.armed_generation)
+                self.assertEqual(transport.drive_sequence, 0)
+
+    def test_deadline_interrupts_live_safe_query_before_drive(self):
+        class SilentSocket:
+            def __init__(self):
+                self.timeout = 2.0
+                self.sent = []
+                self.closed = False
+
+            def sendall(self, packet):
+                self.sent.append(packet)
+
+            def gettimeout(self):
+                return self.timeout
+
+            def settimeout(self, timeout):
+                self.timeout = timeout
+
+            def recv(self, _size):
+                time.sleep(self.timeout)
+                raise socket.timeout()
+
+            def close(self):
+                self.closed = True
+
+        connection = SilentSocket()
+        transport = RoombaTcpTransport("unused", 9000)
+        transport.socket = connection
+        transport.armed_generation = 99
+        with self.assertRaises(DriveDeadlineExpired):
+            transport.query_oi_mode(
+                live=True, deadline_monotonic=time.monotonic() + 0.025
+            )
+        self.assertEqual(
+            connection.sent,
+            [bytes([DIAGNOSTIC_MAGIC, DIAGNOSTIC_OI_MODE_LIVE]), STOP_PACKET],
+        )
+        self.assertTrue(connection.closed)
+        self.assertFalse(transport.connected)
+        self.assertIsNone(transport.armed_generation)
+
+    def test_deadline_closes_after_partial_ack_without_response_reuse(self):
+        class PartialSocket:
+            def __init__(self):
+                self.timeout = 2.0
+                self.sent = []
+                self.partial_sent = False
+                self.closed = False
+
+            def sendall(self, packet):
+                self.sent.append(packet)
+
+            def gettimeout(self):
+                return self.timeout
+
+            def settimeout(self, timeout):
+                self.timeout = timeout
+
+            def recv(self, _size):
+                if not self.partial_sent:
+                    self.partial_sent = True
+                    return bytes([DIAGNOSTIC_MAGIC])
+                time.sleep(self.timeout)
+                raise socket.timeout()
+
+            def close(self):
+                self.closed = True
+
+        connection = PartialSocket()
+        transport = RoombaTcpTransport("unused", 9000)
+        transport.socket = connection
+        transport.armed_generation = 100
+        with self.assertRaisesRegex(DriveDeadlineExpired, r"received 1/13 bytes"):
+            transport.send_twist(
+                0.02,
+                0.0,
+                track_width_m=0.235,
+                max_speed_mm_s=20,
+                deadline_monotonic=time.monotonic() + 0.025,
+            )
+        self.assertEqual(connection.sent[-1], STOP_PACKET)
+        self.assertTrue(connection.closed)
+        self.assertFalse(transport.connected)
 
     def test_bounded_drive_session_expires_and_requires_new_arm(self):
         now = [10.0]

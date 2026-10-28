@@ -44,7 +44,7 @@ class RoombaDiagnosticError(Exception):
 
 
 class DriveDeadlineExpired(RoombaDiagnosticError):
-    """Raised before TCP dispatch when a bounded-drive deadline has passed."""
+    """Raised when a bounded-drive deadline prevents or interrupts TCP I/O."""
 
 
 class SafeModeGate:
@@ -412,13 +412,32 @@ class RoombaTcpTransport:
             )
         return status, right, left
 
-    def query_oi_mode(self, *, live=False):
+    def query_oi_mode(self, *, live=False, deadline_monotonic=None):
         """Return Roomba sensor packet 35 (0=Off, 1=Passive, 2=Safe, 3=Full)."""
         request = DIAGNOSTIC_OI_MODE_LIVE if live else DIAGNOSTIC_OI_MODE
+        started = time.monotonic()
+        self._trace(
+            "tcp_safe_query_start",
+            live=live,
+            deadline_monotonic=deadline_monotonic,
+        )
         self.send_packet(bytes([DIAGNOSTIC_MAGIC, request]))
+        sent_at = time.monotonic()
+        self._trace(
+            "tcp_safe_query_sent", live=live, send_elapsed_s=sent_at - started
+        )
         operation = "live OI mode diagnostic" if live else "OI mode diagnostic"
         response = self._receive_exact(
-            self.socket, OI_MODE_RESPONSE_SIZE, operation=operation
+            self.socket,
+            OI_MODE_RESPONSE_SIZE,
+            operation=operation,
+            deadline_monotonic=deadline_monotonic,
+        )
+        self._trace(
+            "tcp_safe_query_received",
+            live=live,
+            response_wait_elapsed_s=time.monotonic() - sent_at,
+            raw=response.hex(),
         )
         if response[:2] != bytes([DIAGNOSTIC_MAGIC, DIAGNOSTIC_OI_MODE_RESPONSE]):
             raise RoombaDiagnosticError(
@@ -492,8 +511,17 @@ class RoombaTcpTransport:
             left_mm_s=left,
             send_elapsed_s=send_returned - send_started,
         )
+        self._trace(
+            "tcp_drive_ack_wait_start",
+            generation=self.armed_generation,
+            sequence=sequence,
+            deadline_monotonic=deadline_monotonic,
+        )
         response = self._receive_exact(
-            self.socket, DRIVE_RESPONSE_SIZE, operation="Drive ACK"
+            self.socket,
+            DRIVE_RESPONSE_SIZE,
+            operation="Drive ACK",
+            deadline_monotonic=deadline_monotonic,
         )
         self._trace(
             "tcp_drive_ack_received",
@@ -556,14 +584,90 @@ class RoombaTcpTransport:
         except OSError:
             pass
 
-    @staticmethod
-    def _receive_exact(connection, size, *, operation="TCP response"):
+    def _receive_exact(
+        self,
+        connection,
+        size,
+        *,
+        operation="TCP response",
+        deadline_monotonic=None,
+    ):
+        """Receive one fixed response without letting it hide a Drive deadline.
+
+        The same thread remains the sole socket owner.  With an active Drive
+        deadline, short receive timeouts provide cancellation points.  At the
+        absolute deadline it sends STOP on the current session, then closes the
+        socket so a late/partial response can never be consumed as a response
+        belonging to a later session.
+        """
         received = bytearray()
         started = time.monotonic()
+        original_timeout = None
+        deadline_poll_s = 0.01
+        if deadline_monotonic is not None:
+            try:
+                original_timeout = connection.gettimeout()
+            except AttributeError:
+                original_timeout = None
         while len(received) < size:
+            if deadline_monotonic is not None:
+                remaining = deadline_monotonic - time.monotonic()
+                if remaining <= 0.0:
+                    stop_started = time.monotonic()
+                    self._trace(
+                        "tcp_deadline_stop_begin",
+                        operation=operation,
+                        received_bytes=len(received),
+                        expected_bytes=size,
+                        deadline_monotonic=deadline_monotonic,
+                        stop_started=stop_started,
+                        overdue_s=max(0.0, stop_started - deadline_monotonic),
+                    )
+                    stop_error = None
+                    try:
+                        connection.sendall(STOP_PACKET)
+                    except OSError as error:
+                        stop_error = error
+                    self.armed_generation = None
+                    self.drive_sequence = 0
+                    stop_returned = time.monotonic()
+                    self._trace(
+                        "tcp_deadline_stop_return",
+                        operation=operation,
+                        stop_returned=stop_returned,
+                        send_elapsed_s=stop_returned - stop_started,
+                    )
+                    # Poisoned response state must not survive into another
+                    # request. Closing also causes Pico's disconnect STOP.
+                    if self.socket is connection:
+                        self.socket = None
+                    try:
+                        connection.close()
+                    except OSError:
+                        pass
+                    deadline_error = DriveDeadlineExpired(
+                        "{} interrupted at bounded Drive deadline; STOP sent; "
+                        "received {}/{} bytes{}".format(
+                            operation,
+                            len(received),
+                            size,
+                            " (STOP write failed: {})".format(stop_error)
+                            if stop_error is not None
+                            else "",
+                        )
+                    )
+                    if stop_error is not None:
+                        raise deadline_error from stop_error
+                    raise deadline_error
+                try:
+                    connection.settimeout(min(deadline_poll_s, remaining))
+                except AttributeError:
+                    pass
             try:
                 chunk = connection.recv(size - len(received))
             except socket.timeout as error:
+                if deadline_monotonic is not None:
+                    continue
                 raise RoombaDiagnosticError(
                     "{} timed out: received {}/{} bytes; raw={}; "
                     "elapsed={:.3f}s".format(
@@ -581,4 +685,9 @@ class RoombaTcpTransport:
                     )
                 )
             received.extend(chunk)
+        if deadline_monotonic is not None and self.socket is connection:
+            try:
+                connection.settimeout(original_timeout)
+            except AttributeError:
+                pass
         return bytes(received)

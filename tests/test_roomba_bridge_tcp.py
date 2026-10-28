@@ -81,7 +81,8 @@ class RoombaBridgeTcpIntegrationTests(unittest.TestCase):
         self.assertIn("self.safe_gate.establish(status, right, left, mode)", connect)
         self.assertIn("self.safe_gate.permits", on_cmd)
         self.assertIn("Rejected non-zero command: drive_enabled=false", on_cmd)
-        self.assertIn("query_oi_mode(live=True)", tick)
+        self.assertIn("self.transport.query_oi_mode(", tick)
+        self.assertIn("live=True", tick)
         self.assertIn("self.safe_gate.observe_mode(mode)", tick)
         self.assertIn("self.handle_safety_failure(error)", tick)
 
@@ -224,10 +225,25 @@ class RoombaBridgeTcpIntegrationTests(unittest.TestCase):
         bridge = (ROOT / "simulation" / "roomba_bridge_tcp.py").read_text()
         transport = (ROOT / "simulation" / "roomba_tcp_transport.py").read_text()
         tick = bridge[bridge.index("    def tick(self):") : bridge.index("    def tick_watchdog_test")]
-        self.assertLess(tick.index("query_oi_mode(live=True)"), tick.index("permits_dispatch()"))
+        self.assertLess(tick.index("self.transport.query_oi_mode("), tick.index("permits_dispatch()"))
         self.assertIn("deadline_monotonic=self.drive_session_limiter.deadline", tick)
         self.assertIn("dispatch_checked_at >= deadline_monotonic", transport)
         self.assertIn("self.create_timer(0.05, self.tick)", bridge)
+        self.assertIn(
+            "self.create_timer(0.01, self.tick_drive_deadline)", bridge
+        )
+
+    def test_deadline_timer_only_expires_an_active_connected_session(self):
+        source = (ROOT / "simulation" / "roomba_bridge_tcp.py").read_text()
+        method = source[
+            source.index("    def tick_drive_deadline") : source.index(
+                "    def tick_watchdog_test"
+            )
+        ]
+        self.assertIn("self.transport.connected", method)
+        self.assertIn("self.drive_session_limiter.poll()", method)
+        self.assertIn("self.expire_bounded_drive()", method)
+        self.assertNotIn("send_twist", method)
 
     def test_routine_idle_stop_does_not_emit_deadline_timing_log(self):
         source = (ROOT / "simulation" / "roomba_bridge_tcp.py").read_text()

@@ -63,6 +63,7 @@ COPY differential_drive.py /usr/local/bin/differential_drive.py
 COPY latency_trace.py /usr/local/bin/latency_trace.py
 COPY roomba_tcp_transport.py /usr/local/bin/roomba_tcp_transport.py
 COPY roomba_bridge_tcp.py /usr/local/bin/roomba-bridge-tcp
+COPY deadline_ros_timer_dry_run.py /usr/local/bin/deadline-ros-timer-dry-run
 COPY roomba_latency_probe.py /usr/local/bin/roomba-latency-probe
 COPY navigation_latency_probe.py /usr/local/bin/navigation-latency-probe
 COPY roomba_wheel_lift_test.py /usr/local/bin/roomba-wheel-lift-test
@@ -118,7 +119,8 @@ RUN chmod +x /usr/local/bin/start-simulation /usr/local/bin/webcam-bridge \
     /usr/local/bin/pico-dry-run-bridge \
     /usr/local/bin/e2e-dry-run-recorder /usr/local/bin/ai-dry-run-gate-test \
     /usr/local/bin/dry-run-pose-publisher \
-    /usr/local/bin/roomba-bridge-tcp /usr/local/bin/roomba-wheel-lift-test \
+    /usr/local/bin/roomba-bridge-tcp /usr/local/bin/deadline-ros-timer-dry-run \
+    /usr/local/bin/roomba-wheel-lift-test \
     /usr/local/bin/aruco-pose-publisher /usr/local/bin/wheel-odometry-node \
     /usr/local/bin/odometry-replay-node /usr/local/bin/wheel-motion-monitor \
     /usr/local/bin/run-wheel-monitor-dryrun \

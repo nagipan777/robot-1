@@ -143,6 +143,10 @@ class RoombaBridgeTcp(Node):
         # Keep the established 20 Hz rate to avoid multiplying idle STOP TCP
         # traffic and diagnostic output.
         self.create_timer(0.05, self.tick)  # 20Hz
+        # Deadline expiry is safety-critical but does not perform idle I/O.
+        # Poll it independently at 100 Hz so the 20 Hz command/diagnostic
+        # cadence cannot add almost 50 ms before the host starts STOP.
+        self.create_timer(0.01, self.tick_drive_deadline)  # 100Hz
         self.connect()
 
         if not self.drive_enabled:
@@ -356,7 +360,20 @@ class RoombaBridgeTcp(Node):
 
         if command != (0.0, 0.0) and time.monotonic() >= self.next_safe_check:
             try:
-                mode = self.transport.query_oi_mode(live=True)
+                safe_started = time.monotonic()
+                self.latency_trace.record(
+                    "safe_query_start",
+                    deadline_monotonic=self.drive_session_limiter.deadline,
+                )
+                mode = self.transport.query_oi_mode(
+                    live=True,
+                    deadline_monotonic=self.drive_session_limiter.deadline,
+                )
+                self.latency_trace.record(
+                    "safe_query_return",
+                    elapsed_s=time.monotonic() - safe_started,
+                    mode=mode,
+                )
                 self.safe_gate.observe_mode(mode)
                 self.next_safe_check = time.monotonic() + self.safe_check_interval
             except (OSError, ConnectionError, RoombaDiagnosticError) as error:
@@ -414,6 +431,11 @@ class RoombaBridgeTcp(Node):
             ValueError,
         ) as error:
             self.handle_send_failure(error)
+
+    def tick_drive_deadline(self):
+        """Start bounded-session STOP independently of the 20 Hz I/O tick."""
+        if self.transport.connected and self.drive_session_limiter.poll():
+            self.expire_bounded_drive()
 
     def tick_watchdog_test(self):
         event, command = self.watchdog_test_state.poll()
