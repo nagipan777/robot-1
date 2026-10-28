@@ -26,10 +26,12 @@ yaw=0姿勢からyaw offsetを1.7016900232 radとした。
 ArUcoおよびreal-camera dry-run設定へ反映した。旧ライブ非走行結果は旧幾何によるため、
 新しい幾何での候補姿勢確認を別途実施する。
 
-新設定で`real-camera-aruco-dry-run-up`も確認したが、`webcam-bridge`から検出が流れず、
-ROSの連続候補は未確認である。`/robot/pose`と`/roomba/cmd_vel_unstamped`は存在せず、
-実機出力は発生していない。この経路はCreate3/Gazeboも起動したため停止し、Colimaも
-終了した。直接取得した実画像による幾何計算と全349回帰テストはPASSしている。
+当初の`webcam-bridge`検出0件は、Mac側の`vision.py`未起動が原因だった。Create3や
+Gazeboを含まない2ノード専用モードを追加し、800x600、固定YOLO重み、ArUco ID 0で
+ライブ確認した。候補姿勢は`(0.9626, -0.1033, -0.0397)`、3連続ゲート後のlocalizationは
+`(0.9626, -0.1037, -0.0397)`だった。`/robot/pose`と
+`/roomba/cmd_vel_unstamped`は存在せず、実機出力は発生していない。確認後はMac側
+`vision.py`、コンテナ、Colimaをすべて停止した。
 
 この結果により`pose_calibration_ready=true`とした。実験で権威姿勢を使用する直前まで
 次を維持する。

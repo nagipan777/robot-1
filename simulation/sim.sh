@@ -8,6 +8,11 @@ if [ "$(uname -m)" = arm64 ] && [ -x /opt/homebrew/bin/colima ]; then
 fi
 cd "$(dirname "$0")"
 compose=(docker --context colima-create3 compose -f compose.yaml)
+minimal_aruco_compose=(
+  docker --context colima-create3 compose
+  -f compose.yaml
+  -f compose.real_camera_aruco_minimal.yaml
+)
 case "${1:-help}" in
   up)
     if ! colima -p create3 status >/dev/null 2>&1; then
@@ -91,6 +96,28 @@ case "${1:-help}" in
     echo 'Live-ArUco real-camera dry-run started.'
     echo 'Physical output remains disabled; only /roomba/cmd_vel_dry_run is published.'
     echo 'TCP 9000/9001 and the fixed dry-run pose publisher are not used.'
+    ;;
+  real-camera-aruco-minimal-up)
+    if [ "$#" -ne 1 ]; then
+      echo "Usage: $0 real-camera-aruco-minimal-up" >&2
+      exit 2
+    fi
+    if ! colima -p create3 status >/dev/null 2>&1; then
+      colima start create3 --cpu 2 --memory 4 --disk 24 --vm-type vz \
+        --mount none --activate=false --ssh-config=false
+    fi
+    "${minimal_aruco_compose[@]}" up -d --build --force-recreate
+    echo 'Minimal real-camera ArUco bridge started.'
+    echo 'Only webcam-bridge and aruco-pose are configured; Create3/Gazebo/control/Pico are absent.'
+    echo 'Mac producer command:'
+    echo '.venv/bin/python vision.py --camera 0 --width 800 --height 600 --weights runs/detect/real_finetune/weights/best.pt --confidence 0.50 --imgsz 640 --aruco-marker-id 0 --aruco-dictionary DICT_4X4_50'
+    ;;
+  real-camera-aruco-minimal-status)
+    "${minimal_aruco_compose[@]}" exec -T simulator \
+      supervisorctl -c /etc/supervisor/real-camera-aruco-minimal.conf status
+    ;;
+  real-camera-aruco-minimal-down)
+    "${minimal_aruco_compose[@]}" down
     ;;
   nav-test-up)
     if colima -p create3 status >/dev/null 2>&1; then
@@ -757,6 +784,6 @@ case "${1:-help}" in
     "${compose[@]}" cp simulator:/tmp/oscillation_summary.json ../artifacts/oscillation_diagnostics/summary.json
     ;;
   *)
-    echo "Usage: $0 {up|camera-up|vision-integration-up|real-camera-dry-run-up [PICO_IP [X Y YAW]]|real-camera-aruco-dry-run-up|nav-test-up|down|stop|shell|status|cmd-adapter [dry_run|gazebo|roomba] [INPUT_TOPIC]|pico-cmd-dry-run PICO_IP [PORT]|e2e-record {A|B|C|D|E} [SECONDS]|dry-run-pose X Y YAW|camera-status|litter-add X Y|litter-move X Y|litter-remove|logs|teleop|roomba-tcp PICO_IP [PORT]|roomba-tcp-diagnostic PICO_IP [PORT]|roomba-short-e-bridge PICO_IP WHEELS_LIFTED [PORT]|roomba-tcp-watchdog PICO_IP WHEELS_LIFTED [PORT]|roomba-wheel-lift-test MODE [WHEELS_LIFTED]|aruco-pose|aruco-pose-start|aruco-pose-stop|localization-wheel-preview|localization-fusion-preview|localization-preview-test|localization-hardware-live|test-marker|record-status|presentation-layout|replay-create3-trajectory [RESULT_JSON [SPEED]]|ros-status|control-turn|control-approach|control-off|known-target-test|known-target-abort-test|multi-target-test|synthetic-coordinate-test|yolo-navigation-test|oscillation-diagnostics [SECONDS]}"
+    echo "Usage: $0 {up|camera-up|vision-integration-up|real-camera-dry-run-up [PICO_IP [X Y YAW]]|real-camera-aruco-dry-run-up|real-camera-aruco-minimal-up|real-camera-aruco-minimal-status|real-camera-aruco-minimal-down|nav-test-up|down|stop|shell|status|cmd-adapter [dry_run|gazebo|roomba] [INPUT_TOPIC]|pico-cmd-dry-run PICO_IP [PORT]|e2e-record {A|B|C|D|E} [SECONDS]|dry-run-pose X Y YAW|camera-status|litter-add X Y|litter-move X Y|litter-remove|logs|teleop|roomba-tcp PICO_IP [PORT]|roomba-tcp-diagnostic PICO_IP [PORT]|roomba-short-e-bridge PICO_IP WHEELS_LIFTED [PORT]|roomba-tcp-watchdog PICO_IP WHEELS_LIFTED [PORT]|roomba-wheel-lift-test MODE [WHEELS_LIFTED]|aruco-pose|aruco-pose-start|aruco-pose-stop|localization-wheel-preview|localization-fusion-preview|localization-preview-test|localization-hardware-live|test-marker|record-status|presentation-layout|replay-create3-trajectory [RESULT_JSON [SPEED]]|ros-status|control-turn|control-approach|control-off|known-target-test|known-target-abort-test|multi-target-test|synthetic-coordinate-test|yolo-navigation-test|oscillation-diagnostics [SECONDS]}"
     ;;
 esac

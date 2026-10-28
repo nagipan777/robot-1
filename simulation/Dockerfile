@@ -22,6 +22,7 @@ RUN apt-get update \
 COPY worlds/room.sdf /opt/create3_ws/install/irobot_create_gz_bringup/share/irobot_create_gz_bringup/worlds/room.sdf
 COPY worlds/room_camera.sdf /opt/create3_ws/install/irobot_create_gz_bringup/share/irobot_create_gz_bringup/worlds/room_camera.sdf
 COPY supervisord.conf /etc/supervisor/conf.d/create3.conf
+COPY supervisord.real_camera_aruco_minimal.conf /etc/supervisor/real-camera-aruco-minimal.conf
 COPY start-simulation.sh /usr/local/bin/start-simulation
 COPY start-camera-bridge.sh /usr/local/bin/start-camera-bridge
 COPY start-camera-activation.sh /usr/local/bin/start-camera-activation

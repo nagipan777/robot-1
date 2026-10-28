@@ -132,6 +132,40 @@ class RealCameraPicoE2EConfigTests(unittest.TestCase):
         fixed = supervisor[fixed_start:fixed_end]
         self.assertNotIn("real-aruco-dry-run", fixed)
 
+    def test_minimal_aruco_bridge_excludes_motion_and_simulation_processes(self):
+        minimal = (
+            ROOT / "simulation/supervisord.real_camera_aruco_minimal.conf"
+        ).read_text()
+        self.assertIn("[program:webcam-bridge]", minimal)
+        self.assertIn("[program:aruco-pose]", minimal)
+        for forbidden_program in (
+            "create3",
+            "vision-turn-controller",
+            "cmd-vel-output-adapter",
+            "pico-dry-run-bridge",
+            "unstamped-cmd-relay",
+            "dry-run-pose-publisher",
+        ):
+            self.assertNotIn(
+                "[program:{}]".format(forbidden_program), minimal.lower()
+            )
+        self.assertNotIn("start-simulation", minimal)
+        self.assertNotIn("gazebo", minimal.lower())
+
+    def test_minimal_aruco_bridge_command_fixes_camera_contract(self):
+        script = (ROOT / "simulation/sim.sh").read_text()
+        self.assertIn("real-camera-aruco-minimal-up)", script)
+        self.assertIn("--camera 0 --width 800 --height 600", script)
+        self.assertIn("--confidence 0.50 --imgsz 640", script)
+        self.assertIn("--aruco-marker-id 0", script)
+        self.assertIn("real-camera-aruco-minimal.conf", (
+            ROOT / "simulation/compose.real_camera_aruco_minimal.yaml"
+        ).read_text())
+        self.assertIn(
+            "COPY supervisord.real_camera_aruco_minimal.conf",
+            (ROOT / "simulation/Dockerfile").read_text(),
+        )
+
     def test_evidence_recorder_captures_live_aruco_yaw(self):
         recorder = (ROOT / "simulation/e2e_dry_run_recorder.py").read_text()
         self.assertIn('"/robot/pose_candidate"', recorder)

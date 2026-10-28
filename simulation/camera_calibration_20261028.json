@@ -55,10 +55,12 @@
   "pose_calibration_ready": true,
   "pose_output_enabled": false,
   "live_ros_candidate_check": {
-    "status": "not_verified",
-    "reason": "real-camera webcam bridge produced no detections; direct camera capture and geometry checks passed",
+    "status": "pass",
+    "candidate_pose_m_rad": [0.9625665136309082, -0.1033288705248397, -0.03965249986501857],
+    "localization_pose_m_rad": [0.9625779661744772, -0.10365172172538543, -0.03965249986501857],
+    "consecutive_gate_passed": true,
     "physical_pose_topic_present": false,
     "physical_cmd_topic_present": false
   },
-  "note": "Two independent points pass the 0.05 m criterion. Authoritative pose and physical control remain locked pending live candidate verification."
+  "note": "Two independent points pass the 0.05 m criterion. Live candidate and consecutive localization gate passed in the two-node minimal bridge; authoritative pose and physical control remain locked."
 }
