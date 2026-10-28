@@ -1,0 +1,672 @@
+{
+  "scenario": "E",
+  "recorded_at": 1793170237.128924,
+  "counts": {
+    "/webcam/detections": 15,
+    "/robot/pose_candidate": 14
+  },
+  "decision_reasons": [],
+  "nonzero_nav_commands": 0,
+  "nonzero_dry_run_commands": 0,
+  "dry_run_stop_commands": 0,
+  "events": [
+    {
+      "received_at": 1793170233.1645,
+      "topic": "/webcam/detections",
+      "data": {
+        "timestamp": 1793170233.111176,
+        "capture_timestamp": 1793170233.111176,
+        "processing_completed_timestamp": 1793170233.1542342,
+        "processing_latency_s": 0.043058156967163086,
+        "image_width": 800,
+        "image_height": 600,
+        "detections": [],
+        "aruco_detections": [
+          {
+            "marker_id": 0,
+            "corners": [
+              [
+                274.0,
+                171.0
+              ],
+              [
+                335.0,
+                175.0
+              ],
+              [
+                335.0,
+                197.0
+              ],
+              [
+                272.0,
+                193.0
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "received_at": 1793170233.1670628,
+      "topic": "/robot/pose_candidate",
+      "data": {
+        "frame_id": "map",
+        "x": 1.0633818716725416,
+        "y": 0.01975701881056773,
+        "yaw": -0.036519679707131214
+      }
+    },
+    {
+      "received_at": 1793170233.6831834,
+      "topic": "/webcam/detections",
+      "data": {
+        "timestamp": 1793170233.702538,
+        "capture_timestamp": 1793170233.702538,
+        "processing_completed_timestamp": 1793170233.706306,
+        "processing_latency_s": 0.0037679672241210938,
+        "image_width": 800,
+        "image_height": 600,
+        "detections": [],
+        "aruco_detections": [
+          {
+            "marker_id": 0,
+            "corners": [
+              [
+                274.0,
+                171.0
+              ],
+              [
+                335.0,
+                175.0
+              ],
+              [
+                335.0,
+                197.0
+              ],
+              [
+                272.0,
+                193.0
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "received_at": 1793170233.6844752,
+      "topic": "/robot/pose_candidate",
+      "data": {
+        "frame_id": "map",
+        "x": 1.0633818716725416,
+        "y": 0.01975701881056773,
+        "yaw": -0.036519679707131214
+      }
+    },
+    {
+      "received_at": 1793170233.9358628,
+      "topic": "/webcam/detections",
+      "data": {
+        "timestamp": 1793170233.957448,
+        "capture_timestamp": 1793170233.957448,
+        "processing_completed_timestamp": 1793170233.960712,
+        "processing_latency_s": 0.0032639503479003906,
+        "image_width": 800,
+        "image_height": 600,
+        "detections": [],
+        "aruco_detections": [
+          {
+            "marker_id": 0,
+            "corners": [
+              [
+                274.0,
+                171.0
+              ],
+              [
+                335.0,
+                175.0
+              ],
+              [
+                335.0,
+                197.0
+              ],
+              [
+                272.0,
+                193.0
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "received_at": 1793170233.9363763,
+      "topic": "/robot/pose_candidate",
+      "data": {
+        "frame_id": "map",
+        "x": 1.0633818716725416,
+        "y": 0.01975701881056773,
+        "yaw": -0.036519679707131214
+      }
+    },
+    {
+      "received_at": 1793170234.1903243,
+      "topic": "/webcam/detections",
+      "data": {
+        "timestamp": 1793170234.2081761,
+        "capture_timestamp": 1793170234.2081761,
+        "processing_completed_timestamp": 1793170234.2126,
+        "processing_latency_s": 0.004423856735229492,
+        "image_width": 800,
+        "image_height": 600,
+        "detections": [],
+        "aruco_detections": [
+          {
+            "marker_id": 0,
+            "corners": [
+              [
+                274.0,
+                171.0
+              ],
+              [
+                335.0,
+                175.0
+              ],
+              [
+                335.0,
+                197.0
+              ],
+              [
+                272.0,
+                193.0
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "received_at": 1793170234.1927495,
+      "topic": "/robot/pose_candidate",
+      "data": {
+        "frame_id": "map",
+        "x": 1.0633818716725416,
+        "y": 0.01975701881056773,
+        "yaw": -0.036519679707131214
+      }
+    },
+    {
+      "received_at": 1793170234.4371834,
+      "topic": "/webcam/detections",
+      "data": {
+        "timestamp": 1793170234.459328,
+        "capture_timestamp": 1793170234.459328,
+        "processing_completed_timestamp": 1793170234.463797,
+        "processing_latency_s": 0.004469156265258789,
+        "image_width": 800,
+        "image_height": 600,
+        "detections": [],
+        "aruco_detections": []
+      }
+    },
+    {
+      "received_at": 1793170234.677592,
+      "topic": "/webcam/detections",
+      "data": {
+        "timestamp": 1793170234.701133,
+        "capture_timestamp": 1793170234.701133,
+        "processing_completed_timestamp": 1793170234.704863,
+        "processing_latency_s": 0.0037300586700439453,
+        "image_width": 800,
+        "image_height": 600,
+        "detections": [],
+        "aruco_detections": [
+          {
+            "marker_id": 0,
+            "corners": [
+              [
+                274.0,
+                171.0
+              ],
+              [
+                333.0,
+                175.0
+              ],
+              [
+                336.0,
+                196.0
+              ],
+              [
+                272.0,
+                193.0
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "received_at": 1793170234.6787694,
+      "topic": "/robot/pose_candidate",
+      "data": {
+        "frame_id": "map",
+        "x": 1.064134069482506,
+        "y": 0.02012160615246161,
+        "yaw": -0.04184005132334767
+      }
+    },
+    {
+      "received_at": 1793170234.9314644,
+      "topic": "/webcam/detections",
+      "data": {
+        "timestamp": 1793170234.952956,
+        "capture_timestamp": 1793170234.952956,
+        "processing_completed_timestamp": 1793170234.9583528,
+        "processing_latency_s": 0.005396842956542969,
+        "image_width": 800,
+        "image_height": 600,
+        "detections": [],
+        "aruco_detections": [
+          {
+            "marker_id": 0,
+            "corners": [
+              [
+                274.0,
+                171.0
+              ],
+              [
+                335.0,
+                175.0
+              ],
+              [
+                336.0,
+                199.0
+              ],
+              [
+                272.0,
+                193.0
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "received_at": 1793170234.932864,
+      "topic": "/robot/pose_candidate",
+      "data": {
+        "frame_id": "map",
+        "x": 1.061857001088333,
+        "y": 0.019494686673577417,
+        "yaw": -0.036519679707131214
+      }
+    },
+    {
+      "received_at": 1793170235.183579,
+      "topic": "/webcam/detections",
+      "data": {
+        "timestamp": 1793170235.19926,
+        "capture_timestamp": 1793170235.19926,
+        "processing_completed_timestamp": 1793170235.209602,
+        "processing_latency_s": 0.010342121124267578,
+        "image_width": 800,
+        "image_height": 600,
+        "detections": [],
+        "aruco_detections": [
+          {
+            "marker_id": 0,
+            "corners": [
+              [
+                274.0,
+                171.0
+              ],
+              [
+                335.0,
+                175.0
+              ],
+              [
+                336.0,
+                199.0
+              ],
+              [
+                272.0,
+                193.0
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "received_at": 1793170235.1843886,
+      "topic": "/robot/pose_candidate",
+      "data": {
+        "frame_id": "map",
+        "x": 1.061857001088333,
+        "y": 0.019494686673577417,
+        "yaw": -0.036519679707131214
+      }
+    },
+    {
+      "received_at": 1793170235.436157,
+      "topic": "/webcam/detections",
+      "data": {
+        "timestamp": 1793170235.448653,
+        "capture_timestamp": 1793170235.448653,
+        "processing_completed_timestamp": 1793170235.457737,
+        "processing_latency_s": 0.009083986282348633,
+        "image_width": 800,
+        "image_height": 600,
+        "detections": [],
+        "aruco_detections": [
+          {
+            "marker_id": 0,
+            "corners": [
+              [
+                274.0,
+                171.0
+              ],
+              [
+                335.0,
+                175.0
+              ],
+              [
+                335.0,
+                197.0
+              ],
+              [
+                272.0,
+                193.0
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "received_at": 1793170235.436906,
+      "topic": "/robot/pose_candidate",
+      "data": {
+        "frame_id": "map",
+        "x": 1.0633818716725416,
+        "y": 0.01975701881056773,
+        "yaw": -0.036519679707131214
+      }
+    },
+    {
+      "received_at": 1793170235.6745265,
+      "topic": "/webcam/detections",
+      "data": {
+        "timestamp": 1793170235.6974049,
+        "capture_timestamp": 1793170235.6974049,
+        "processing_completed_timestamp": 1793170235.70199,
+        "processing_latency_s": 0.0045850276947021484,
+        "image_width": 800,
+        "image_height": 600,
+        "detections": [],
+        "aruco_detections": [
+          {
+            "marker_id": 0,
+            "corners": [
+              [
+                274.0,
+                171.0
+              ],
+              [
+                333.0,
+                175.0
+              ],
+              [
+                336.0,
+                196.0
+              ],
+              [
+                272.0,
+                193.0
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "received_at": 1793170235.6749334,
+      "topic": "/robot/pose_candidate",
+      "data": {
+        "frame_id": "map",
+        "x": 1.064134069482506,
+        "y": 0.02012160615246161,
+        "yaw": -0.04184005132334767
+      }
+    },
+    {
+      "received_at": 1793170235.9252255,
+      "topic": "/webcam/detections",
+      "data": {
+        "timestamp": 1793170235.944442,
+        "capture_timestamp": 1793170235.944442,
+        "processing_completed_timestamp": 1793170235.9520671,
+        "processing_latency_s": 0.007625102996826172,
+        "image_width": 800,
+        "image_height": 600,
+        "detections": [],
+        "aruco_detections": [
+          {
+            "marker_id": 0,
+            "corners": [
+              [
+                274.0,
+                171.0
+              ],
+              [
+                335.0,
+                175.0
+              ],
+              [
+                336.0,
+                199.0
+              ],
+              [
+                272.0,
+                193.0
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "received_at": 1793170235.9262073,
+      "topic": "/robot/pose_candidate",
+      "data": {
+        "frame_id": "map",
+        "x": 1.061857001088333,
+        "y": 0.019494686673577417,
+        "yaw": -0.036519679707131214
+      }
+    },
+    {
+      "received_at": 1793170236.1706097,
+      "topic": "/webcam/detections",
+      "data": {
+        "timestamp": 1793170236.188761,
+        "capture_timestamp": 1793170236.188761,
+        "processing_completed_timestamp": 1793170236.196726,
+        "processing_latency_s": 0.007965087890625,
+        "image_width": 800,
+        "image_height": 600,
+        "detections": [],
+        "aruco_detections": [
+          {
+            "marker_id": 0,
+            "corners": [
+              [
+                274.0,
+                171.0
+              ],
+              [
+                335.0,
+                175.0
+              ],
+              [
+                336.0,
+                199.0
+              ],
+              [
+                272.0,
+                193.0
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "received_at": 1793170236.171635,
+      "topic": "/robot/pose_candidate",
+      "data": {
+        "frame_id": "map",
+        "x": 1.061857001088333,
+        "y": 0.019494686673577417,
+        "yaw": -0.036519679707131214
+      }
+    },
+    {
+      "received_at": 1793170236.427186,
+      "topic": "/webcam/detections",
+      "data": {
+        "timestamp": 1793170236.443211,
+        "capture_timestamp": 1793170236.443211,
+        "processing_completed_timestamp": 1793170236.4536982,
+        "processing_latency_s": 0.010487079620361328,
+        "image_width": 800,
+        "image_height": 600,
+        "detections": [],
+        "aruco_detections": [
+          {
+            "marker_id": 0,
+            "corners": [
+              [
+                274.0,
+                171.0
+              ],
+              [
+                335.0,
+                175.0
+              ],
+              [
+                335.0,
+                197.0
+              ],
+              [
+                272.0,
+                193.0
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "received_at": 1793170236.4287193,
+      "topic": "/robot/pose_candidate",
+      "data": {
+        "frame_id": "map",
+        "x": 1.0633818716725416,
+        "y": 0.01975701881056773,
+        "yaw": -0.036519679707131214
+      }
+    },
+    {
+      "received_at": 1793170236.6729085,
+      "topic": "/webcam/detections",
+      "data": {
+        "timestamp": 1793170236.6912608,
+        "capture_timestamp": 1793170236.6912608,
+        "processing_completed_timestamp": 1793170236.699966,
+        "processing_latency_s": 0.00870513916015625,
+        "image_width": 800,
+        "image_height": 600,
+        "detections": [],
+        "aruco_detections": [
+          {
+            "marker_id": 0,
+            "corners": [
+              [
+                274.0,
+                171.0
+              ],
+              [
+                333.0,
+                175.0
+              ],
+              [
+                336.0,
+                196.0
+              ],
+              [
+                272.0,
+                193.0
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "received_at": 1793170236.6734366,
+      "topic": "/robot/pose_candidate",
+      "data": {
+        "frame_id": "map",
+        "x": 1.064134069482506,
+        "y": 0.02012160615246161,
+        "yaw": -0.04184005132334767
+      }
+    },
+    {
+      "received_at": 1793170236.9171019,
+      "topic": "/webcam/detections",
+      "data": {
+        "timestamp": 1793170236.935404,
+        "capture_timestamp": 1793170236.935404,
+        "processing_completed_timestamp": 1793170236.9439738,
+        "processing_latency_s": 0.008569717407226562,
+        "image_width": 800,
+        "image_height": 600,
+        "detections": [],
+        "aruco_detections": [
+          {
+            "marker_id": 0,
+            "corners": [
+              [
+                274.0,
+                171.0
+              ],
+              [
+                333.0,
+                175.0
+              ],
+              [
+                336.0,
+                196.0
+              ],
+              [
+                272.0,
+                193.0
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "received_at": 1793170236.9181244,
+      "topic": "/robot/pose_candidate",
+      "data": {
+        "frame_id": "map",
+        "x": 1.064134069482506,
+        "y": 0.02012160615246161,
+        "yaw": -0.04184005132334767
+      }
+    }
+  ]
+}

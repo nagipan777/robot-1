@@ -105,9 +105,12 @@ class PoseFreshnessTests(unittest.TestCase):
 
     def test_defaults_and_existing_safety_flags_remain_locked(self):
         config = (ROOT / "simulation/aruco_pose.yaml").read_text()
-        self.assertIn("pose_calibration_ready: false", config)
+        self.assertIn("pose_calibration_ready: true", config)
         self.assertIn("pose_output_enabled: false", config)
-        self.assertIn("marker_yaw_offset_rad: 1.508362", config)
+        self.assertIn("marker_yaw_offset_rad: 1.7215103460715193", config)
+        self.assertIn("marker_size_m: 0.080", config)
+        self.assertIn("calibration_image_width: 800", config)
+        self.assertIn("calibration_image_height: 600", config)
         controller = (ROOT / "simulation/vision_controller.real_dry_run.yaml").read_text()
         self.assertRegex(controller, r"(?m)^\s*control_enabled:\s*false$")
         self.assertRegex(controller, r"(?m)^\s*calibration_ready:\s*false$")

@@ -20,8 +20,8 @@ class RealCameraPicoE2EConfigTests(unittest.TestCase):
         self.assertIn("dry_run_enabled and control_enabled cannot both be true", self.controller)
 
     def test_real_camera_calibration_and_guard_are_explicit(self):
-        self.assertRegex(self.config, r"(?m)^\s*calibration_image_width:\s*1280$")
-        self.assertRegex(self.config, r"(?m)^\s*calibration_image_height:\s*960$")
+        self.assertRegex(self.config, r"(?m)^\s*calibration_image_width:\s*800$")
+        self.assertRegex(self.config, r"(?m)^\s*calibration_image_height:\s*600$")
         self.assertRegex(self.config, r"(?m)^\s*robot_guard_radius:\s*0\.5$")
         self.assertRegex(self.config, r"(?m)^\s*max_robot_pose_age:\s*1\.0$")
         self.assertRegex(self.config, r"(?m)^\s*min_detection_confidence:\s*0\.50$")
