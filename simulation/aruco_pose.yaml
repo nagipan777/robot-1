@@ -9,22 +9,22 @@ aruco_pose_publisher:
     marker_id: 0
     # Measured black-square outer edge on 2026-10-28.
     marker_size_m: 0.080
-    # Geometry passed measured-point, independent-point, and live candidate checks.
+    # Geometry passed two independent measured-point checks on 2026-10-28.
     # Authoritative output remains separately locked below.
     pose_calibration_ready: true
     pose_output_enabled: false
     calibration_image_width: 800
     calibration_image_height: 600
-    image_to_map_homography: [-0.0018464969215479087, 0.0020825244943078226, 3.0751072795448335, -0.00385006680492276, 0.000248863267202273, 1.1852871713012325, -0.00122255324131377, 0.008053491461048078, 1.0]
+    image_to_map_homography: [-0.001470399292974724, 0.0037626294410314717, 5.797794949988258, -0.008284737151183564, -0.0003804983196974422, 3.566416130572197, -0.001447932227919006, 0.017275494400635284, 1.0]
     # Camera-ground projection defines map (0, 0); units are metres/radians.
     camera_ground_x: 0.0
     camera_ground_y: 0.0
     camera_height_m: 0.53
     marker_height_m: 0.12
-    marker_to_robot_forward_m: 0.0
+    marker_to_robot_forward_m: -0.010
     # Marker is measured 0.002 m left of robot centre, so marker-to-robot is right.
     marker_to_robot_left_m: -0.002
-    marker_yaw_offset_rad: 1.7215103460715193
+    marker_yaw_offset_rad: 1.7016900232085759
     min_marker_pixel_area: 100.0
     max_pose_age: 0.5
     min_consecutive_detections: 3

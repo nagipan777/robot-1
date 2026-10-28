@@ -1,3 +1,4 @@
+import json
 import math
 import pathlib
 import unittest
@@ -78,6 +79,32 @@ class ArucoPoseGeometryTests(unittest.TestCase):
                 map_bounds=[0, 1, 0, 1],
             )
 
+    def test_measured_independent_points_stay_within_five_centimetres(self):
+        calibration = json.loads(
+            (ROOT / "simulation/camera_calibration_20261028.json").read_text()
+        )
+        cases = (
+            (
+                [(290, 232), (351, 235), (347, 255), (283, 250)],
+                (1.0, 0.1),
+            ),
+            (
+                [(458, 248), (521, 253), (524, 279), (458, 270)],
+                (0.95, -0.1),
+            ),
+        )
+        for corners, expected in cases:
+            with self.subTest(expected=expected):
+                x, y, _ = marker_pose(
+                    corners,
+                    calibration["image_to_floor_intersection_homography"],
+                    camera_ground=calibration["camera_ground_m"],
+                    camera_height=calibration["camera_height_m"],
+                    marker_height=calibration["marker_height_m"],
+                    min_pixel_area=100.0,
+                )
+                self.assertLessEqual(math.hypot(x - expected[0], y - expected[1]), 0.05)
+
 
 class PoseFreshnessTests(unittest.TestCase):
     def test_requires_consecutive_fresh_monotonic_detections(self):
@@ -107,7 +134,8 @@ class PoseFreshnessTests(unittest.TestCase):
         config = (ROOT / "simulation/aruco_pose.yaml").read_text()
         self.assertIn("pose_calibration_ready: true", config)
         self.assertIn("pose_output_enabled: false", config)
-        self.assertIn("marker_yaw_offset_rad: 1.7215103460715193", config)
+        self.assertIn("marker_yaw_offset_rad: 1.7016900232085759", config)
+        self.assertIn("marker_to_robot_forward_m: -0.010", config)
         self.assertIn("marker_size_m: 0.080", config)
         self.assertIn("calibration_image_width: 800", config)
         self.assertIn("calibration_image_height: 600", config)

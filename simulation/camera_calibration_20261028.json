@@ -10,51 +10,55 @@
   "camera_height_m": 0.53,
   "marker_height_m": 0.12,
   "camera_ground_m": [0.0, 0.0],
-  "marker_to_robot_forward_m": 0.0,
+  "marker_to_robot_forward_m": -0.01,
   "marker_to_robot_left_m": -0.002,
-  "marker_yaw_offset_rad": 1.7215103460715193,
+  "marker_yaw_offset_rad": 1.7016900232085759,
   "image_to_floor_intersection_homography": [
-    -0.0018464969215479087,
-    0.0020825244943078226,
-    3.0751072795448335,
-    -0.00385006680492276,
-    0.000248863267202273,
-    1.1852871713012325,
-    -0.00122255324131377,
-    0.008053491461048078,
+    -0.001470399292974724,
+    0.0037626294410314717,
+    5.797794949988258,
+    -0.008284737151183564,
+    -0.0003804983196974422,
+    3.566416130572197,
+    -0.001447932227919006,
+    0.017275494400635284,
     1.0
   ],
   "fit_points": [
-    {"id": 1, "pixel": [401.0, 321.75], "map_m": [0.8, -0.09]},
-    {"id": 2, "pixel": [115.75, 292.0], "map_m": [0.8, 0.24]},
-    {"id": 3, "pixel": [595.75, 254.5], "map_m": [0.8, -0.35]},
-    {"id": 4, "pixel": [192.25, 148.75], "map_m": [1.2, 0.2]},
-    {"id": 5, "pixel": [467.25, 203.5], "map_m": [1.0, -0.2]},
-    {"id": 6, "pixel": [113.0, 210.75], "map_m": [1.0, 0.2]}
+    {"pixel": [421.25, 290.0], "marker_map_m": [0.9, 0.0]},
+    {"pixel": [206.75, 332.0], "marker_map_m": [0.8, 0.2]},
+    {"pixel": [605.0, 333.75], "marker_map_m": [0.8, -0.2]},
+    {"pixel": [328.0, 217.0], "marker_map_m": [1.1, 0.15]},
+    {"pixel": [509.75, 222.25], "marker_map_m": [1.1, -0.15]},
+    {"pixel": [414.5, 264.75], "marker_map_m": [1.0, 0.0]}
   ],
-  "fit_rmse_m": 0.040198400710962166,
-  "leave_one_out_rmse_m": 0.11260665330299702,
-  "leave_one_out_max_error_m": 0.14267950880101382,
-  "independent_validation": {
-    "pixel": [301.75, 181.5],
-    "actual_map_m": [1.1, 0.0],
-    "predicted_map_m": [1.0704438692515261, 0.025393637533900365],
-    "error_m": 0.03896667412063803
-  },
-  "yaw_zero_validation": {
-    "actual_yaw_rad": 0.0,
-    "predicted_yaw_rad": -2.4424906541753444e-15,
-    "position_error_m": 0.04413191099667649
+  "fit_rmse_m": 0.01927935998152492,
+  "independent_validations_runtime_geometry": [
+    {
+      "pixel": [317.75, 243.0],
+      "actual_marker_map_m": [1.0, 0.1],
+      "predicted_marker_map_m": [1.0206962153130519, 0.13735847884555527],
+      "error_m": 0.042708187387642704
+    },
+    {
+      "pixel": [490.25, 262.5],
+      "actual_marker_map_m": [0.95, -0.1],
+      "predicted_marker_map_m": [0.973844625613575, -0.09539303353254808],
+      "error_m": 0.02428559883313123
+    }
+  ],
+  "intrinsic_calibration": {
+    "usable_views": 7,
+    "rms_reprojection_error_px": 0.7438429090553375,
+    "runtime_uses_raw_pixel_homography": true
   },
   "pose_calibration_ready": true,
   "pose_output_enabled": false,
-  "live_candidate_dry_run": {
-    "frames": 15,
-    "id0_frames": 14,
-    "pose_candidates": 14,
-    "representative_pose_m_rad": [1.0633818716725416, 0.01975701881056773, -0.036519679707131214],
-    "nonzero_navigation_commands": 0,
-    "nonzero_physical_commands": 0
+  "live_ros_candidate_check": {
+    "status": "not_verified",
+    "reason": "real-camera webcam bridge produced no detections; direct camera capture and geometry checks passed",
+    "physical_pose_topic_present": false,
+    "physical_cmd_topic_present": false
   },
-  "note": "Geometry and live candidate stream validated; authoritative pose output remains locked pending the experiment enable step."
+  "note": "Two independent points pass the 0.05 m criterion. Authoritative pose and physical control remain locked pending live candidate verification."
 }
