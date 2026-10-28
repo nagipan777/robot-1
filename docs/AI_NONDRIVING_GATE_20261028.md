@@ -136,8 +136,62 @@ Repository regression after recording these results: 353/353 tests PASS using
 `.venv/bin/python -m unittest discover -s tests -t .`. An earlier invocation
 with the system Python was invalid because that interpreter lacked OpenCV and
 the managed sandbox denied loopback sockets; it is not counted as a product
-test result. No retraining, model replacement, physical output, commit push, or
-moving-target switch test was performed in STEP 39.
+test result. At this initial collection checkpoint, no retraining, model
+replacement, physical output, commit push, or moving-target switch test had
+been performed; the subsequent follow-up is recorded below.
+
+## STEP 39 follow-up training and live-camera result
+
+Three new candidates were trained without overwriting the frozen old or
+hard-negative models. The first seven position-diverse training frames were
+kept separate from one validation and one test frame. Three additional
+100-cm-band frames were later added to training; the original validation and
+test frames remained untouched. The updated local dataset contains 10 train,
+1 val, and 1 test image. Its transfer ZIP SHA256 is
+`e84c040ce56ec0ec22b8cc2545c6d7d16fb9e39edd9267916d5157b4d025c914`.
+
+Candidate results:
+
+| Candidate | Training scope | mixed test mAP50 | real test mAP50 | held-out position test at live settings | Judgment |
+|---|---|---:|---:|---|---|
+| v1 | real + position only | 0.127 | 0.995 | 0.643 at 640 | reject: catastrophic mixed regression |
+| v2 | full mixed + 5x position balancing | 0.641 | 0.982 | 0.123 at 640; 0.630 at 960 | live candidate at 960 only |
+| v3 | full mixed + 5x updated position balancing | 0.659 | 0.856 | 0.383 at 640; 0.392 at 960 | reject: held-out distance failure |
+
+The v2 candidate is stored separately as
+`runs/detect/real_finetune/weights/best_position_v2_20261028.pt`, SHA256
+`3e1de3c72c6d807fd527cefc6b70801275e3a9b54bb9daa8d87a59dc7be12b03`.
+It has not replaced the configured model and is not deployed to a physical
+output path.
+
+Mac fixed-image timing for v2 was measured over ten post-warmup predictions:
+
+| imgsz | mean wall time | maximum wall time | held-out detection |
+|---:|---:|---:|---|
+| 640 | 35.98 ms | 38.40 ms | none at confidence 0.50 |
+| 960 | 68.98 ms | 69.57 ms | confidence 0.6351 |
+
+An attended live-camera preview then used v2, confidence 0.50, `imgsz=960`,
+USB camera index 0, and `--simulator ''`. ROS, Pico, ARM, and physical output
+were absent. Results were:
+
+- forward 80 cm at centre, left 20 cm, and right 20 cm: mask-only detection
+  held for 10 seconds at each point; ArUco ID 0 remained visible;
+- forward 60 cm/right 20 cm: mask-only detection held for 10 seconds;
+- mask absent: no `litter` box for 10 seconds; ArUco ID 0 remained visible;
+- movement across the 80-cm band from left 20 cm to right 20 cm over about
+  three seconds: the box followed the mask with no observed switch to the
+  Roomba, floor, or ruler;
+- forward 100 cm/right 10 cm: improved response but occasional loss, so this
+  distance is outside the qualified working range.
+
+Detector judgment: **PASS only for the controlled forward 60--80 cm working
+range with v2 at `imgsz=960`**. The detector movement observation does not
+verify SafeTargetManager identity/latch behaviour. Before any physical
+AI-linked trial, v2+960 still requires the isolated ROS non-driving E2E for
+detection loss/re-detection, ArUco loss, input expiry, STOP candidate, and no
+automatic re-ARM. The configured production model remains unchanged until that
+gate passes.
 
 ## Deterministic nonphysical command/timeout result
 
