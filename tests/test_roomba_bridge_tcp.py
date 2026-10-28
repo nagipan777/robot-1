@@ -146,7 +146,7 @@ class RoombaBridgeTcpIntegrationTests(unittest.TestCase):
     def test_diagnostic_command_remains_stop_only(self):
         sim_script = (ROOT / "simulation" / "sim.sh").read_text()
         start = sim_script.index("  roomba-tcp-diagnostic)")
-        case = sim_script[start : sim_script.index("  roomba-short-e-bridge)", start)]
+        case = sim_script[start : sim_script.index("  roomba-short-e-bridge|", start)]
         self.assertIn("-p drive_enabled:=false", case)
         self.assertIn("-p diagnostic_on_connect:=true", case)
         self.assertIn("-p watchdog_test_mode:=false", case)
@@ -167,9 +167,10 @@ class RoombaBridgeTcpIntegrationTests(unittest.TestCase):
 
     def test_short_e_launcher_requires_wheel_lift_and_hard_bounds(self):
         sim_script = (ROOT / "simulation" / "sim.sh").read_text()
-        start = sim_script.index("  roomba-short-e-bridge)")
+        start = sim_script.index("  roomba-short-e-bridge|")
         case = sim_script[start : sim_script.index("  roomba-tcp-watchdog)", start)]
-        self.assertIn('"$3" != "WHEELS_LIFTED"', case)
+        self.assertIn('bridge_confirmation="WHEELS_LIFTED"', case)
+        self.assertIn('"$3" != "$bridge_confirmation"', case)
         self.assertIn("-p drive_enabled:=true", case)
         self.assertIn("-p diagnostic_on_connect:=true", case)
         self.assertIn("-p watchdog_test_mode:=false", case)
@@ -180,7 +181,7 @@ class RoombaBridgeTcpIntegrationTests(unittest.TestCase):
 
     def test_short_e_launcher_forwards_signals_and_rejects_duplicates(self):
         sim_script = (ROOT / "simulation" / "sim.sh").read_text()
-        start = sim_script.index("  roomba-short-e-bridge)")
+        start = sim_script.index("  roomba-short-e-bridge|")
         case = sim_script[start : sim_script.index("  roomba-tcp-watchdog)", start)]
         self.assertIn('exec 9>/tmp/roomba-short-e-bridge.lock', case)
         self.assertIn("flock -n 9", case)
@@ -199,6 +200,17 @@ class RoombaBridgeTcpIntegrationTests(unittest.TestCase):
         self.assertIn('kill -INT "$pid"', case)
         self.assertIn('/usr/local/bin/roomba-bridge-tcp --ros-args', case)
         self.assertIn('exec -T simulator bash -lc', case)
+
+    def test_attended_floor_launcher_requires_distinct_explicit_confirmation(self):
+        sim_script = (ROOT / "simulation" / "sim.sh").read_text()
+        start = sim_script.index("  roomba-short-e-bridge|")
+        case = sim_script[start : sim_script.index("  roomba-tcp-watchdog)", start)]
+        self.assertIn("roomba-attended-floor-bridge", case)
+        self.assertIn('bridge_confirmation="ATTENDED_FLOOR"', case)
+        self.assertIn('"$3" != "$bridge_confirmation"', case)
+        self.assertIn("-p max_speed_mm_s:=20", case)
+        self.assertIn("-p command_timeout:=0.5", case)
+        self.assertIn("-p max_drive_session_duration:=0.4", case)
 
     def test_bounded_drive_gate_defaults_off_and_revokes_arm_on_deadline(self):
         source = (ROOT / "simulation" / "roomba_bridge_tcp.py").read_text()
