@@ -60,6 +60,85 @@ the observed tape false positive. The remaining live blocker is unstable mask
 detection versus image position/scale and transient new-target classification
 during repositioning.
 
+## STEP 39 position, distance, and shape survey
+
+The final camera and Roomba placement remained fixed. Points outside the
+camera field of view (directly left/right of the Roomba) were excluded rather
+than counted as detector failures. The attended working-area survey used only
+the forward field of view and kept physical output disabled.
+
+| Mask position | Attended result |
+|---|---|
+| forward 60 cm, centre | PASS: mask-only detection held for 10 s; ArUco ID 0 remained visible |
+| forward 60 cm, left 20 cm | PASS: mask-only detection held for 10 s; ArUco ID 0 remained visible |
+| forward 60 cm, right 20 cm | FAIL: boundary behaviour / intermittent detection |
+| forward 80 cm, centre | FAIL: intermittent detection near confidence 0.50 |
+| forward 80 cm, left 20 cm | FAIL: mild but visible detection dropout |
+| forward 80 cm, right 20 cm | PASS for one orientation: mask-only detection held for 10 s |
+| forward 100 cm, centre | FAIL: no live detection |
+
+At forward 80 cm/right 20 cm, rotating the mask by 90 degrees without moving
+its centre reduced detection substantially. Distance alone therefore does not
+explain the failures: image position, mask fold/outline, orientation, scale,
+and background overlap all contribute. The moving-target/new-target-switch
+case remains a separate test and was not scored as a static-position result.
+
+Two attended screenshots captured the same forward-80-cm condition once with
+no mask box and once at `litter 0.50`; these are evidence only and were not
+used as training images because the overlay is burned into the screenshots.
+
+### Position-diverse raw dataset
+
+Raw overlay-free frames were collected locally under
+`datasets/real_position_20261028/`. The repository's existing `/datasets/`
+ignore rule remains unchanged, so the image data are not staged for GitHub.
+
+- train: 7 images and 7 positive labels
+- val: 1 image and 1 positive label, unseen position/orientation
+- test: 1 image and 1 positive label, farther unseen position/orientation
+- captured resolution: 1280x960 (the camera did not accept the requested
+  1760x1328 in this capture path)
+- integrity: all image/label pairs present, normalized boxes valid, no file
+  duplicates, and boxes visually checked to include only the mask
+
+Image SHA256 values:
+
+```text
+train 7f7f46cd83ca57c41a67686c2c060c13415777fb5c13933977731d730613d3a4 20261028_210000_887016.jpg
+train 3cd0d1a2847251babb2fcd7d1330b3b9d75a94129991095bea6fcce7ef3e16db 20261028_210011_410580.jpg
+train 929d7cabcec5072941924bc7570629f3cde38a0b5910122eebfc1105426a2bb8 20261028_210028_116550.jpg
+train 50cfd185a441089a588c611f3abf54d1f91f4b2b7547bfe96974cfc65f87a743 20261028_210046_204388.jpg
+train 84e822d4dc7cc92893f5e63d8f5e7fde18571975fb364bb4aaff90859dd00ed9 20261028_210112_069080.jpg
+train bad8e56aab3027ee9c367c4b3f2582bd05cb7d0f1ec473fee29a78edde7fd891 20261028_211329_909089.jpg
+train 8cebbd8dfcf72a782f1d7d0d8bce17d730259f80fcd567e8a3b8bfdafc4a2fb6 20261028_211456_389619.jpg
+val   2f9ea83793ddf72984cc98be5340a1b69a4c3d8aff6256b8a544159674dbbab0 20261028_210550_717544.jpg
+test  e7bd258e3593ecb9156c010dcd9d6ba02182ad331663dc5ebb26004f44891dab 20261028_210905_986544.jpg
+```
+
+### Frozen-model baseline on the independent frames
+
+The operating threshold remained 0.50 and `imgsz=640`. The old and new model
+files were not modified.
+
+| Model | val mask | test mask | Roomba false positive |
+|---|---:|---:|---:|
+| old `best.pt` | 0.504 (borderline PASS) | below operating threshold | 0.697 / 0.693 |
+| new `best_hardneg_20261028.pt` | 0.619 (PASS) | 0.338 (FAIL) | no corresponding high-confidence FP |
+
+The new model preserves the hard-negative improvement but still misses the
+farther independent test mask. This dataset is suitable for a new training
+candidate, but the one-image val/test sets are diagnostic evidence, not a
+statistically sufficient final accuracy claim. Any retrained model must remain
+separate from both frozen models and be evaluated without moving these val/test
+images into training.
+
+Repository regression after recording these results: 353/353 tests PASS using
+`.venv/bin/python -m unittest discover -s tests -t .`. An earlier invocation
+with the system Python was invalid because that interpreter lacked OpenCV and
+the managed sandbox denied loopback sockets; it is not counted as a product
+test result. No retraining, model replacement, physical output, commit push, or
+moving-target switch test was performed in STEP 39.
+
 ## Deterministic nonphysical command/timeout result
 
 A synthetic ROS test exercised the same controller and dry-run adapter after
