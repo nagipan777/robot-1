@@ -1,5 +1,6 @@
 import argparse
 import unittest
+from unittest.mock import patch
 
 import cv2
 import numpy as np
@@ -59,6 +60,12 @@ class VideoSourceTest(unittest.TestCase):
 
     def test_network_capture_helper_is_available_for_reconnects(self):
         self.assertTrue(callable(open_video_capture))
+
+    @patch("vision.cv2.VideoCapture")
+    @patch("vision.platform.system", return_value="Darwin")
+    def test_macos_camera_uses_avfoundation(self, _system, video_capture):
+        open_video_capture(0)
+        video_capture.assert_called_once_with(0, cv2.CAP_AVFOUNDATION)
 
     def test_aruco_is_opt_in_and_uses_existing_payload(self):
         source = (__import__("pathlib").Path(__file__).resolve().parents[1] / "vision.py").read_text()

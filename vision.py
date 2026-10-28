@@ -1,6 +1,7 @@
 import argparse
 import hashlib
 import json
+import platform
 import time
 import urllib.error
 import urllib.request
@@ -47,6 +48,8 @@ def open_video_capture(source, network_stream=False):
                 5000,
             ],
         )
+    if platform.system() == "Darwin":
+        return cv2.VideoCapture(source, cv2.CAP_AVFOUNDATION)
     return cv2.VideoCapture(source)
 
 
