@@ -75,6 +75,10 @@ COPY wheel_odometry_node.py /usr/local/bin/wheel-odometry-node
 COPY wheel_odometry_node.py /usr/local/bin/wheel_odometry_node.py
 COPY roomba_odometry_observer.yaml /etc/roomba-odometry-observer.yaml
 COPY odometry_dryrun_core.py /usr/local/bin/odometry_dryrun_core.py
+COPY wheel_motion_monitor.py /usr/local/bin/wheel_motion_monitor.py
+COPY wheel_motion_monitor_node.py /usr/local/bin/wheel-motion-monitor
+COPY wheel_motion_monitor.yaml /etc/wheel-motion-monitor.yaml
+COPY run_wheel_monitor_dryrun.py /usr/local/bin/run-wheel-monitor-dryrun
 COPY odometry_replay_node.py /usr/local/bin/odometry-replay-node
 COPY odometry_aruco_ab.py /usr/local/bin/odometry-aruco-ab
 COPY run_odometry_dryrun.py /usr/local/bin/run-odometry-dryrun
@@ -116,7 +120,8 @@ RUN chmod +x /usr/local/bin/start-simulation /usr/local/bin/webcam-bridge \
     /usr/local/bin/dry-run-pose-publisher \
     /usr/local/bin/roomba-bridge-tcp /usr/local/bin/roomba-wheel-lift-test \
     /usr/local/bin/aruco-pose-publisher /usr/local/bin/wheel-odometry-node \
-    /usr/local/bin/odometry-replay-node \
+    /usr/local/bin/odometry-replay-node /usr/local/bin/wheel-motion-monitor \
+    /usr/local/bin/run-wheel-monitor-dryrun \
     /usr/local/bin/odometry-aruco-ab /usr/local/bin/run-odometry-dryrun \
     /usr/local/bin/odometry-ros-e2e \
     /usr/local/bin/localization-fusion-node /usr/local/bin/localization-preview-test \

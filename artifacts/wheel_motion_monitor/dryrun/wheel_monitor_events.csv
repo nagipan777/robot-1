@@ -1,0 +1,23 @@
+event,severity,received_at_s,source_timestamp_s,data_age_s,requested_left_mm_s,requested_right_mm_s,left_encoder,right_encoder,left_delta,right_delta,estimated_distance_m,estimated_yaw_rad,arm_generation,motion_state,detail
+arm_requested,info,1.0,,,0,0,,,,,,,10,arm_requested,ACK not observed
+encoder_baseline,info,1.0,1.0,0.0,0,0,100,100,,,,,10,arm_requested,no motion inferred from baseline
+drive_requested,info,1.01,,,20,20,,,,,,,10,drive_requested,
+encoder_update,info,1.1,1.1,0.0,20,20,105,105,5,5,0.002222824990747495,0.0,10,drive_requested,
+encoder_baseline,info,2.0,2.0,0.0,0,0,200,200,,,,,,stopped,no motion inferred from baseline
+drive_requested,info,2.01,,,-20,20,,,,,,,,drive_requested,
+encoder_update,info,2.1,2.1,0.0,-20,20,195,205,-5,5,0.0,0.01891765949572336,,drive_requested,
+encoder_baseline,info,3.0,3.0,0.0,0,0,300,300,,,,,,stopped,no motion inferred from baseline
+drive_requested,info,3.01,,,20,20,,,,,,,,drive_requested,
+encoder_update,info,3.1,3.1,0.0,20,20,302,302,2,2,0.000889129996298998,0.0,,drive_requested,
+stop_requested,info,3.2,,,0,0,,,,,,,,stop_requested,
+stop_coast_observed,info,3.3,3.3,0.0,0,0,303,303,1,1,0.000444564998149499,0.0,,stop_requested,within configured warning grace
+wheel_change_after_stop,warning,3.5,3.5,0.0,0,0,304,304,1,1,0.000444564998149499,0.0,,stop_requested,
+encoder_baseline,info,4.0,4.0,0.0,0,0,400,400,,,,,,stopped,no motion inferred from baseline
+drive_requested,info,4.01,,,20,20,,,,,,,,drive_requested,
+command_without_encoder_change,warning,4.3,4.3,0.0,20,20,400,400,0,0,0.0,0.0,,drive_requested,
+measurement_stale,warning,0.6,,0.6,0,0,,,,,,,,stopped,no encoder sample received
+encoder_baseline,info,5.0,5.0,0.0,0,0,65534,65534,,,,,,stopped,no motion inferred from baseline
+encoder_update,info,5.1,5.1,0.0,0,0,2,2,4,4,0.001778259992597996,0.0,,stopped,
+encoder_baseline,info,6.0,6.0,0.0,0,0,10,10,,,,,,stopped,no motion inferred from baseline
+measurement_unavailable,warning,6.1,6.1,0.0,0,0,,,,,,,,stopped,rx_timeout
+encoder_baseline,info,6.2,6.2,0.0,0,0,50000,50000,,,,,,stopped,no motion inferred from baseline

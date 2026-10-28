@@ -559,6 +559,17 @@ case "${1:-help}" in
     trap - EXIT INT TERM
     echo "PASS: odometry dry-run E2E artifacts saved to $artifact_dir"
     ;;
+  wheel-monitor-dryrun)
+    if [ "$#" -ne 1 ]; then
+      echo "Usage: $0 wheel-monitor-dryrun" >&2
+      exit 2
+    fi
+    artifact_dir="$(cd .. && pwd)/artifacts/wheel_motion_monitor/dryrun"
+    mkdir -p "$artifact_dir"
+    PYTHONPATH=. ../.venv/bin/python run_wheel_monitor_dryrun.py \
+      --output "$artifact_dir"
+    echo "PASS: wheel monitor dry-run artifacts saved to $artifact_dir"
+    ;;
   localization-hardware-live)
     echo 'Refusing hardware-live localization: UART/TCP 9000 is intentionally not implemented in this phase.' >&2
     exit 1
@@ -815,6 +826,6 @@ case "${1:-help}" in
     "${compose[@]}" cp simulator:/tmp/oscillation_summary.json ../artifacts/oscillation_diagnostics/summary.json
     ;;
   *)
-    echo "Usage: $0 {up|camera-up|vision-integration-up|real-camera-dry-run-up [PICO_IP [X Y YAW]]|real-camera-aruco-dry-run-up|real-camera-aruco-minimal-up|real-camera-aruco-minimal-status|real-camera-aruco-minimal-down|real-camera-ai-dry-run-up|real-camera-ai-dry-run-status|real-camera-ai-dry-run-down|nav-test-up|down|stop|shell|status|cmd-adapter [dry_run|gazebo|roomba] [INPUT_TOPIC]|pico-cmd-dry-run PICO_IP [PORT]|e2e-record {A|B|C|D|E} [SECONDS]|dry-run-pose X Y YAW|camera-status|litter-add X Y|litter-move X Y|litter-remove|logs|teleop|roomba-tcp PICO_IP [PORT]|roomba-tcp-diagnostic PICO_IP [PORT]|roomba-short-e-bridge PICO_IP WHEELS_LIFTED [PORT]|roomba-attended-floor-bridge PICO_IP ATTENDED_FLOOR [PORT]|roomba-tcp-watchdog PICO_IP WHEELS_LIFTED [PORT]|roomba-wheel-lift-test MODE [WHEELS_LIFTED]|aruco-pose|aruco-pose-start|aruco-pose-stop|localization-wheel-preview|localization-fusion-preview|localization-preview-test|localization-hardware-live|test-marker|record-status|presentation-layout|replay-create3-trajectory [RESULT_JSON [SPEED]]|ros-status|control-turn|control-approach|control-off|known-target-test|known-target-abort-test|multi-target-test|synthetic-coordinate-test|yolo-navigation-test|oscillation-diagnostics [SECONDS]}"
+    echo "Usage: $0 {up|camera-up|vision-integration-up|real-camera-dry-run-up [PICO_IP [X Y YAW]]|real-camera-aruco-dry-run-up|real-camera-aruco-minimal-up|real-camera-aruco-minimal-status|real-camera-aruco-minimal-down|real-camera-ai-dry-run-up|real-camera-ai-dry-run-status|real-camera-ai-dry-run-down|nav-test-up|down|stop|shell|status|cmd-adapter [dry_run|gazebo|roomba] [INPUT_TOPIC]|pico-cmd-dry-run PICO_IP [PORT]|e2e-record {A|B|C|D|E} [SECONDS]|dry-run-pose X Y YAW|camera-status|litter-add X Y|litter-move X Y|litter-remove|logs|teleop|roomba-tcp PICO_IP [PORT]|roomba-tcp-diagnostic PICO_IP [PORT]|roomba-short-e-bridge PICO_IP WHEELS_LIFTED [PORT]|roomba-attended-floor-bridge PICO_IP ATTENDED_FLOOR [PORT]|roomba-tcp-watchdog PICO_IP WHEELS_LIFTED [PORT]|roomba-wheel-lift-test MODE [WHEELS_LIFTED]|aruco-pose|aruco-pose-start|aruco-pose-stop|localization-wheel-preview|localization-fusion-preview|localization-preview-test|localization-hardware-live|odometry-dryrun-e2e|wheel-monitor-dryrun|test-marker|record-status|presentation-layout|replay-create3-trajectory [RESULT_JSON [SPEED]]|ros-status|control-turn|control-approach|control-off|known-target-test|known-target-abort-test|multi-target-test|synthetic-coordinate-test|yolo-navigation-test|oscillation-diagnostics [SECONDS]}"
     ;;
 esac
