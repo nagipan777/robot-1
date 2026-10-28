@@ -266,19 +266,62 @@ the configured 1.0 s input timeout producing STOP, and same-target
 reconfirmation remaining stopped. It is synthetic nonphysical evidence, not a
 live-camera detector PASS and not permission for physical motion.
 
-## Human physical-test status and remaining checks
+## Human physical-test result
 
-Current judgment: **AI-linked attended physical test remains NO-GO**.
+Final judgment: **AI-linked attended physical single trial PASS** on 2026-10-28
+for the fixed forward 60--80 cm working range. This is evidence for one
+attended trial, not authorization for unattended or continuous operation.
 
-Minimum remaining checks:
+Two safe non-driving attempts exposed operation defects before the successful
+trial:
 
-1. Keep the final yellow-tape floor layout fixed and improve mask detection
-   across the required working area/scale (additional position-diverse positive
-   data and mask-plus-Roomba negatives), without changing the 0.50 threshold.
-2. Repeat live mask detection/loss/re-detection and ArUco loss with zero false
-   targets, while preserving the three-frame gate, 50 cm guard, freshness, and
-   no automatic restart.
-3. Immediately before any separately approved physical trial, re-confirm
-   physical-output exclusivity, STOP ACK `0x07`, requested wheels `0/0`, Safe
-   mode `2`, 20 mm/s limit, independent 0.4 s stop, watchdog, and independent
-   human stop means.
+1. Two orphaned STOP-only diagnostic bridges (`drive_enabled=false`) remained
+   after earlier interrupted Docker exec sessions. They produced duplicate
+   `/roomba_bridge_tcp` nodes and ARM subscriptions. Both exact processes were
+   stopped with SIGINT; the successful trial required exactly one bridge
+   process and one ARM subscriber.
+2. A producer invocation incorrectly included `--simulator ''`. Local YOLO and
+   ArUco overlays remained visible, but `/webcam/detections`,
+   `/robot/pose_candidate`, and `/nav/cmd_vel_unstamped` were silent. Omitting
+   that argument restored the configured `http://127.0.0.1:8765/detections`
+   transport. Before ARM, live ROS evidence was a fresh pose near
+   `(0.720, -0.125)` and a candidate `linear.x=0.08 m/s`, `angular.z=0`; the
+   physical bridge remained responsible for the 20 mm/s wheel cap.
+
+The controller was explicitly restarted while Pico was locked and no physical
+bridge existed. This cleared the earlier intentional `SafeTargetManager`
+same-target suspension for a new human-approved trial; no automatic re-ARM or
+automatic restart was added.
+
+Successful trial evidence:
+
+- model v2 SHA256
+  `3e1de3c72c6d807fd527cefc6b70801275e3a9b54bb9daa8d87a59dc7be12b03`,
+  confidence 0.50, `imgsz=960`, USB camera 0 at 800x600;
+- STOP diagnostic before motion: ACK `0x07`, requested wheels `0/0`, OI Safe
+  mode `2`;
+- one physical bridge, one ARM subscription, one physical command publisher,
+  and one subscriber;
+- ARM generation `1793199001`, complete 7-byte accepted ACK and commit;
+- seven acknowledged Drive frames, sequences 1--7, each right/left
+  `20/20 mm/s`;
+- first Drive at Pico `3240159 ms`, normal STOP at `3240448 ms`: 289 ms,
+  within the independent 400 ms session bound;
+- the 500 ms watchdog also emitted a redundant STOP after Drive traffic ended;
+- PC disconnect latched another STOP and closed the TCP session;
+- human observation: short forward motion, then both wheels stopped, no
+  abnormal sound, and no restart.
+
+The final locked diagnostic was performed without ARM or Drive and returned
+STOP ACK `0x07`, requested right/left `0/0`, and OI mode `2`. Pico was restored
+to `ALLOW_NONZERO_DRIVE=False`; `COMMAND_TIMEOUT_MS=500`,
+`DRIVE_SESSION_TIMEOUT_MS=400`, and `BRC_WAKE_ENABLED=False` were retained.
+Machine-readable evidence is in
+`artifacts/step41/ai_attended_floor_trial_20261028.json`, SHA256
+`509868c9f1c1e238769f344f137aa649d52793d550d9a9358094742532d4818d`.
+
+Operational follow-up: improve interrupted diagnostic-bridge cleanup so a
+STOP-only Docker exec cannot remain orphaned. Until that is implemented and
+tested, every physical preflight must require bridge process count = 1 and ARM
+subscription count = 1. Do not add automatic re-ARM or weaken the existing
+target suspension behavior.
