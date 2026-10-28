@@ -156,3 +156,59 @@ not ignored, and did not authorize ARM or Drive on the failed session.
 Real-Pico non-driving communication gate: **PASS with one recovered transient
 READY timeout**. Revised deadline STOP under real non-zero Drive remains
 **UNVERIFIED**.
+
+## Attended wheel-lift verification of the revised deadline path
+
+After a separate explicit per-trial approval, one supported-wheel trial was
+run at right/left 20/20 mm/s with the existing 400 ms host and Pico bounds.
+Gazebo and Create3 were absent and exactly one command subscriber was matched.
+
+Host evidence:
+
+- ARM generation `1793227658` was accepted;
+- six complete Drive ACKs were logged for sequences 1--6 at 20/20 mm/s;
+- while waiting for the next Drive ACK, the new deadline-aware receive path
+  emitted `Drive ACK interrupted at bounded Drive deadline; STOP sent; received
+  0/13 bytes`;
+- the session was closed, ARM was revoked, no Drive was retried, and reconnect
+  confirmed STOP ACK `0x07`, requested wheels `0/0`, and OI Safe `2`;
+- session-start log to the later failure log was 400.734 ms. STOP send and
+  socket close completed before that failure log, but `latency_trace_path` was
+  not set for this invocation, so the exact STOP-begin timestamp inside that
+  sub-millisecond interval was not persisted.
+
+Pico evidence, using only Pico-relative timestamps:
+
+- first Drive: `392768 ms`;
+- Drive sequences 1--7 were accepted, all at 20/20 mm/s;
+- normal STOP: `392992 ms`, or **224 ms after the first Drive**;
+- connection-close STOP followed, then reconnect STOP;
+- zero Drive frames occurred after STOP.
+
+The operator confirmed brief wheel rotation followed by complete physical
+stopping, no abnormal sound, and no restart. The Pico lock was restored to
+`ALLOW_NONZERO_DRIVE=False`; final STOP ACK `0x07`, requested wheels `0/0`, and
+Safe `2` passed; Pico was stopped and unplugged; the temporary container and
+network were removed.
+
+Judgment:
+
+- blocking-I/O deadline interruption and STOP dispatch: **PASS**;
+- no Drive after deadline/STOP, no automatic re-ARM/re-Drive: **PASS**;
+- Pico-observed Drive-to-STOP bound: **PASS at 224 ms**;
+- physical stop and no restart: **PASS**;
+- strict host `STOP begin <= 400.000 ms` timestamp evidence: **NOT CAPTURED**
+  (upper observation envelope is the later failure log at 400.734 ms).
+
+No additional Drive trial was performed. A future trial is only needed if the
+submission requires a persisted host STOP-begin timestamp at sub-millisecond
+precision; it must set `latency_trace_path` before a separately approved run.
+
+The trial also exposed an observability defect: without `latency_trace_path`,
+the deadline exception did not print the internal STOP-begin timestamp. A
+follow-up code-only patch now includes deadline, STOP begin, deadline overrun,
+and STOP-send elapsed time in the normal `DriveDeadlineExpired` message. It
+does not change the deadline, STOP packet, socket lifecycle, or safety gates.
+Focused regression remained **66/66 PASS** and the full project regression
+remained **369/369 PASS**. This logging patch has not been used for another
+physical Drive trial.

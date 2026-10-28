@@ -647,10 +647,16 @@ class RoombaTcpTransport:
                         pass
                     deadline_error = DriveDeadlineExpired(
                         "{} interrupted at bounded Drive deadline; STOP sent; "
-                        "received {}/{} bytes{}".format(
+                        "received {}/{} bytes; deadline={:.6f}; "
+                        "stop_started={:.6f}; overdue_s={:.6f}; "
+                        "stop_send_elapsed_s={:.6f}{}".format(
                             operation,
                             len(received),
                             size,
+                            deadline_monotonic,
+                            stop_started,
+                            max(0.0, stop_started - deadline_monotonic),
+                            stop_returned - stop_started,
                             " (STOP write failed: {})".format(stop_error)
                             if stop_error is not None
                             else "",

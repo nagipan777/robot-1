@@ -177,7 +177,7 @@ class RoombaTcpTransportTests(unittest.TestCase):
                 transport.socket = connection
                 transport.armed_generation = 41
                 deadline = time.monotonic() + 0.025
-                with self.assertRaises(DriveDeadlineExpired):
+                with self.assertRaises(DriveDeadlineExpired) as caught:
                     transport.send_twist(
                         0.02,
                         0.0,
@@ -185,6 +185,11 @@ class RoombaTcpTransportTests(unittest.TestCase):
                         max_speed_mm_s=20,
                         deadline_monotonic=deadline,
                     )
+                message = str(caught.exception)
+                self.assertIn("deadline=", message)
+                self.assertIn("stop_started=", message)
+                self.assertIn("overdue_s=", message)
+                self.assertIn("stop_send_elapsed_s=", message)
 
                 stages = [stage for stage, _ in events]
                 self.assertIn("tcp_deadline_stop_begin", stages)
