@@ -193,6 +193,54 @@ detection loss/re-detection, ArUco loss, input expiry, STOP candidate, and no
 automatic re-ARM. The configured production model remains unchanged until that
 gate passes.
 
+## STEP 40 isolated ROS non-driving E2E
+
+The native arm64 Colima installation under `/opt/homebrew` was used after
+finding that `/usr/local/bin/colima` and `limactl` were x86_64 binaries. The
+existing `create3` profile was recovered from `Broken` by a non-destructive
+stop/start. `simulation/sim.sh` was corrected to use the actual profile syntax
+`colima -p create3 start`; no profile, image, or persistent data was deleted.
+
+The isolated runtime again contained only `webcam_bridge`,
+`aruco_pose_publisher`, `vision_turn_controller`, and
+`cmd_vel_output_adapter`. Runtime parameters were re-read as
+`control_enabled=false`, `dry_run_enabled=true`, and adapter `mode=dry_run`.
+`/roomba/cmd_vel_unstamped`, Pico, ARM, Create3, and Gazebo were absent.
+
+An initial producer invocation sent 1280x960 frames to the calibration-locked
+800x600 controller. All 218 frames were rejected for image-size mismatch and
+zero non-zero commands were produced. This was an invocation error, not a
+camera failure. No calibration value or safety gate was changed.
+
+The valid trial used USB camera index 0, 800x600 captured frames, v2 SHA256
+`3e1de3c72c6d807fd527cefc6b70801275e3a9b54bb9daa8d87a59dc7be12b03`,
+confidence 0.50, and inference `imgsz=960`. Evidence is stored locally at
+`artifacts/step40/step40_v2_800x600_e2e.json`, SHA256
+`7b0885df4dcb10a64ccabd8e329122fa29553a5839324f6fdff835eda5e18bdc`.
+
+Results:
+
+- mask absent: ArUco ID 0 only;
+- mask at forward 80 cm: accepted target confidence 0.7064 and ROS-only
+  Navigation/dry-run candidate generation;
+- recorded non-zero Navigation/dry-run candidates: 516/516;
+- mask removal: dry-run STOP followed the final non-zero sample by 18.692 ms;
+- non-zero dry-run candidates after that STOP: zero;
+- same-target re-presentation: detections resumed at approximately 0.78--0.85
+  confidence, but Navigation/dry-run non-zero output did not restart;
+- ArUco hidden: detections were rejected as `robot_pose_stale`, with no
+  non-zero restart;
+- ArUco restored: pose candidate recovered near `(0.727, -0.064)` and no
+  non-zero restart occurred;
+- the isolated container was removed at trial end.
+
+STEP 40 judgment: **ROS non-driving gate PASS** for the controlled 60--80 cm
+range. The 0.08 m/s value observed here is an internal Navigation candidate,
+not a physical command; the independently tested physical bridge remains
+responsible for the 20 mm/s cap. This result does not authorize a physical
+trial by itself. Immediately before any separately approved physical run, the
+physical STOP/ARM/session/20 mm/s/0.4 s/watchdog gates must still be rechecked.
+
 ## Deterministic nonphysical command/timeout result
 
 A synthetic ROS test exercised the same controller and dry-run adapter after

@@ -21,7 +21,7 @@ ai_dry_run_compose=(
 case "${1:-help}" in
   up)
     if ! colima -p create3 status >/dev/null 2>&1; then
-      colima start create3 --cpu 2 --memory 4 --disk 24 --vm-type vz \
+      colima -p create3 start --cpu 2 --memory 4 --disk 24 --vm-type vz \
         --mount none --activate=false --ssh-config=false
     fi
     SIM_WORLD=room "${compose[@]}" up -d --build
@@ -29,7 +29,7 @@ case "${1:-help}" in
     ;;
   camera-up)
     if ! colima -p create3 status >/dev/null 2>&1; then
-      colima start create3 --cpu 2 --memory 4 --disk 24 --vm-type vz \
+      colima -p create3 start --cpu 2 --memory 4 --disk 24 --vm-type vz \
         --mount none --activate=false --ssh-config=false
     fi
     SIM_WORLD=room_camera VISION_CONTROLLER_CONFIG=/etc/vision-controller.sim-camera.yaml \
@@ -43,7 +43,7 @@ case "${1:-help}" in
       "${compose[@]}" down
       colima -p create3 stop
     fi
-    colima start create3 --cpu 4 --memory 6 --disk 24 --vm-type vz \
+    colima -p create3 start --cpu 4 --memory 6 --disk 24 --vm-type vz \
       --mount none --activate=false --ssh-config=false
     SIM_WORLD=room_camera \
       VISION_CONTROLLER_CONFIG=/etc/vision-controller.integration.yaml \
@@ -70,7 +70,7 @@ case "${1:-help}" in
     dry_y="${4:-0.00}"
     dry_yaw="${5:-0.00}"
     if ! colima -p create3 status >/dev/null 2>&1; then
-      colima start create3 --cpu 4 --memory 6 --disk 24 --vm-type vz \
+      colima -p create3 start --cpu 4 --memory 6 --disk 24 --vm-type vz \
         --mount none --activate=false --ssh-config=false
     fi
     SIM_WORLD=room VISION_CONTROLLER_CONFIG=/etc/vision-controller.real-dry-run.yaml \
@@ -90,7 +90,7 @@ case "${1:-help}" in
       exit 2
     fi
     if ! colima -p create3 status >/dev/null 2>&1; then
-      colima start create3 --cpu 4 --memory 6 --disk 24 --vm-type vz \
+      colima -p create3 start --cpu 4 --memory 6 --disk 24 --vm-type vz \
         --mount none --activate=false --ssh-config=false
     fi
     SIM_WORLD=room \
@@ -108,7 +108,7 @@ case "${1:-help}" in
       exit 2
     fi
     if ! colima -p create3 status >/dev/null 2>&1; then
-      colima start create3 --cpu 2 --memory 4 --disk 24 --vm-type vz \
+      colima -p create3 start --cpu 2 --memory 4 --disk 24 --vm-type vz \
         --mount none --activate=false --ssh-config=false
     fi
     "${minimal_aruco_compose[@]}" up -d --build --force-recreate
@@ -130,7 +130,7 @@ case "${1:-help}" in
       exit 2
     fi
     if ! colima -p create3 status >/dev/null 2>&1; then
-      colima start create3 --cpu 2 --memory 4 --disk 24 --vm-type vz \
+      colima -p create3 start --cpu 2 --memory 4 --disk 24 --vm-type vz \
         --mount none --activate=false --ssh-config=false
     fi
     "${ai_dry_run_compose[@]}" up -d --build --force-recreate
@@ -150,7 +150,7 @@ case "${1:-help}" in
       "${compose[@]}" down
       colima -p create3 stop
     fi
-    colima start create3 --cpu 4 --memory 6 --disk 24 --vm-type vz \
+    colima -p create3 start --cpu 4 --memory 6 --disk 24 --vm-type vz \
       --mount none --activate=false --ssh-config=false
     SIM_WORLD=room VISION_CONTROLLER_CONFIG=/etc/vision-controller.sim-camera.yaml \
       ROBOT_X=0.0 ROBOT_Y=-0.75 ROBOT_YAW=0.0 SPAWN_DOCK=false \
@@ -520,7 +520,7 @@ case "${1:-help}" in
       exit 2
     fi
     if ! colima -p create3 status >/dev/null 2>&1; then
-      colima start create3 --cpu 2 --memory 4 --disk 24 --vm-type vz \
+      colima -p create3 start --cpu 2 --memory 4 --disk 24 --vm-type vz \
         --mount none --activate=false --ssh-config=false
     fi
     image=robot-odometry-dryrun
