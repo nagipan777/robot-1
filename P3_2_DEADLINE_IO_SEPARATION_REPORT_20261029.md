@@ -128,3 +128,31 @@ Live-camera non-driving E2E: **PASS**. This confirms detection, pose,
 Navigation candidate, detection-loss STOP, pose-loss STOP, and no automatic
 same-target restart without enabling any physical output. It does not verify
 the revised host STOP timing against a real Pico/UART/robot.
+
+## Locked real-Pico non-driving preflight
+
+The Pico was then checked with Roomba connected but without any non-zero Drive:
+
+- deployed constants: command watchdog 500 ms, session limit 400 ms,
+  `ALLOW_NONZERO_DRIVE=False`, and BRC wake disabled;
+- Pico `192.168.0.32:9000`, RSSI -39 to -56 dBm;
+- Mac ping 10/10, zero packet loss, 3.454/30.541/94.649 ms min/mean/max RTT;
+- STOP-only host diagnostic: ACK `0x07`, requested wheels `0/0`, OI Safe `2`;
+- one explicitly approved accepted-ARM/no-Drive probe: generation
+  `1793226749`, complete accepted ACK, immediate STOP, stale-generation
+  rejection, and `nonzero_drive_sent=false`;
+- Pico lock restored to `ALLOW_NONZERO_DRIVE=False`, followed by another STOP
+  ACK `0x07`, requested wheels `0/0`, and Safe `2`;
+- operator confirmed stopped wheels, no abnormal sound, and no restart before
+  and after each diagnostic;
+- Pico was stopped and unplugged; Docker containers and network were removed.
+
+One first READY receive timed out on the host. A STOP-only retry recovered. The
+Pico log showed `READY_TX_OK sent=6` for every related connection and only
+`PC closed the connection` disconnects; there was no Pico ACK-generation or
+send failure. This is recorded as a transient host/container TCP receive event,
+not ignored, and did not authorize ARM or Drive on the failed session.
+
+Real-Pico non-driving communication gate: **PASS with one recovered transient
+READY timeout**. Revised deadline STOP under real non-zero Drive remains
+**UNVERIFIED**.
