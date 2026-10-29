@@ -68,6 +68,8 @@ COPY roomba_latency_probe.py /usr/local/bin/roomba-latency-probe
 COPY navigation_latency_probe.py /usr/local/bin/navigation-latency-probe
 COPY roomba_wheel_lift_test.py /usr/local/bin/roomba-wheel-lift-test
 COPY roomba_wheel_lift_test_core.py /usr/local/bin/roomba_wheel_lift_test_core.py
+COPY attended_nav_arm_gate.py /usr/local/bin/attended-nav-arm-gate
+COPY attended_nav_arm_gate_core.py /usr/local/bin/attended_nav_arm_gate_core.py
 COPY aruco_pose_core.py /usr/local/bin/aruco_pose_core.py
 COPY aruco_pose_publisher.py /usr/local/bin/aruco-pose-publisher
 COPY aruco_pose.yaml /etc/aruco-pose.yaml
@@ -121,6 +123,7 @@ RUN chmod +x /usr/local/bin/start-simulation /usr/local/bin/webcam-bridge \
     /usr/local/bin/dry-run-pose-publisher \
     /usr/local/bin/roomba-bridge-tcp /usr/local/bin/deadline-ros-timer-dry-run \
     /usr/local/bin/roomba-wheel-lift-test \
+    /usr/local/bin/attended-nav-arm-gate \
     /usr/local/bin/aruco-pose-publisher /usr/local/bin/wheel-odometry-node \
     /usr/local/bin/odometry-replay-node /usr/local/bin/wheel-motion-monitor \
     /usr/local/bin/run-wheel-monitor-dryrun \

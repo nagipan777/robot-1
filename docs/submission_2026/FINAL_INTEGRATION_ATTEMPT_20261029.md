@@ -46,3 +46,7 @@ Navigation非ゼロ候補を観測→直後に単一ARM」を同一の非走行�
 なしで、その同期手順が1回だけARM候補を生成し、古い候補では何もしないことを
 dry-run検証する。
 
+この同期補助は同日実装され、mock ROS 2 E2Eと全回帰380/380をPASSした。実カメラ
+候補および実機との確認は別ゲートとして残す。詳細は
+`docs/submission_2026/ATTENDED_NAV_ARM_SYNC_REPORT_20261029.md`を参照する。
+
