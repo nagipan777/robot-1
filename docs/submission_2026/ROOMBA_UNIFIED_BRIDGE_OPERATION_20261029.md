@@ -59,8 +59,14 @@ STOP専用ブリッジを終了して走行用ブリッジを起動する運用�
 - `roomba_bridge_tcp.py`、`roomba_tcp_transport.py`、Pico codeの差分: なし。
 - 実Pico/Roombaでのsession起動・再接続・ログ回収: 未確認。
 
-## 判定
+## 実機追試と判定
 
-非走行の構成・回帰: **PASS**。新運用はブリッジ切替をなくし、定常bridgeを1個に
-限定する。実機運用PASSではないため、次回はまずlockを維持したSTOP/Safe診断とログ
-回収だけを確認し、その後に別途承認された単発試験へ進む。
+同日、単一sessionで起動時STOP/Safe診断、明示ARM、AI連動Drive、deadline STOP、
+終了診断、試行固有trace回収までを有人実機で確認した。Drive ACK 4/4、最大20 mm/s、
+最初のDriveからSTOP開始303.644 ms、期限後Drive 0件で、限定条件の単発試験は
+**PASS**。詳細は`FILMED_UNIFIED_AI_TRIAL_20261029.md`を参照する。
+
+一方、session外で手動起動したphysical adapterが終了後も残ったことと、Pico再起動後の
+旧TCP socket検出が遅れたことは未解決である。ARM失効後の全指令拒否により再発進は
+なかったが、次回運用ではadapterの所有・cleanupをsessionへ含め、Pico再起動時は
+sessionを明示終了してSTOP/Safe再診断する。
