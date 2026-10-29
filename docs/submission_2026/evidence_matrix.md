@@ -1,6 +1,6 @@
 # PAI最終課題 証拠対応表
 
-更新日: 2026-10-29 / ブランチ: `fix-arm-ack-session-recovery` / 基準HEAD: `bb48c0a`
+更新日: 2026-10-29 / ブランチ: `fix-arm-ack-session-recovery` / 基準HEAD: `a6b36a7`
 
 ## 証拠区分
 
@@ -24,6 +24,7 @@
 | 実カメラYOLO | C | 固定環境、前方60–80 cm、confidence 0.50、imgsz 960で限定PASS | `P3_2_DEADLINE_IO_SEPARATION_REPORT_20261029.md`、commit `bb48c0a` |
 | ArUco ID 0姿勢 | C | 800×600固定カメラ、DICT_4X4_50、80 mm marker。較正独立点誤差0.0427/0.0243 m | `docs/CAMERA_CALIBRATION_20261028.md` |
 | 検出途絶・姿勢喪失STOP候補 | C | physical topicなしでSTOP、同一目標の自動再開なしを確認 | `P3_2_DEADLINE_IO_SEPARATION_REPORT_20261029.md` |
+| 新鮮なNavigation候補とARM操作の同期 | C+M | 古い姿勢ではARM 0件でtimeout。新しい試行へ初期化後、実カメラ候補2件から模擬ARM 1件。mask除去後は非ゼロ0件、再ARM 0件、物理topicなし | `docs/submission_2026/ATTENDED_NAV_ARM_SYNC_REPORT_20261029.md`、commit `a6b36a7` |
 | Create3/Gazebo統合 | M | シミュレーション映像・フレームあり。実Roomba証拠とは分離 | `artifacts/submission/`、`PAI_SUBMISSION.md` |
 | `/roomba/odom` | M | ROS dry-run E2E PASS、TFなし、Navigation未接続 | `ODOMETRY_DRYRUN_REPORT_20261027.md` |
 | 実機encoder 43/44取得 | U | Pico UART経路へ未統合。符号、scale、実機タイミング未確認 | 同上、`WHEEL_MOTION_MONITOR_REPORT_20261029.md` |
@@ -44,7 +45,8 @@ hostはsequence 1–6の13 byte ACKを完全受信・検証した。その後seq
 
 ## 2026-10-29提出監査
 
-- 最新ソースの全回帰: **373/373 PASS**。最初のsandbox実行はloopback bindを禁止され24件error、同一コマンドをloopback許可下で再実行して全件PASSした。
+- 提出証拠作成時点（commit `299e065`）の全回帰: **373/373 PASS**。
+- ARM同期補助追加後の最新ソース: **380/380 PASS**。最初のsandbox実行はloopback bindを禁止され24件error、同一コマンドをloopback許可下で再実行して全件PASSした。
 - `git diff --check`: PASS。
 - 本ディレクトリとhandoff文書のcredential文字列scan: 該当なし。
 - 主要artifact SHA256:

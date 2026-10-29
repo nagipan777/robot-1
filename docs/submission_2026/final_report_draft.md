@@ -26,6 +26,19 @@
 
 2026-10-29の別試験はP3-2 deadline修正版の有人両輪浮上試験である。hostは6件の完全ACKを受信し、7件目のACK待ちをdeadlineで中断してSTOP・ARM失効・接続破棄を行った。Picoは期限前に届いた7件目を含む7 Driveを記録し、最初のDriveから通常STOPまで224 ms、STOP後Drive 0件だった。物理停止と再発進なしも確認した。[P3-2報告](../../P3_2_DEADLINE_IO_SEPARATION_REPORT_20261029.md)
 
+同日午前の追加AI統合試行は別の**FAIL**である。Navigation候補がSTOPした後、人間の
+ARM操作まで約23.26秒空き、ARM ACKは成立したがARM後の新鮮な候補がなく、Driveは
+0件、物理移動も0件だった。再ARM・再Driveは行わず安全終了した。このFAILは10月28日
+のAI床面PASSやP3-2浮上PASSを取り消すものではなく、有人操作と候補鮮度の同期不足を
+示した。[追加統合試行](FINAL_INTEGRATION_ATTEMPT_20261029.md)
+
+対策として、固定generationと確認文字列を必須とし、新鮮な非ゼロNavigation候補2件と
+ARM subscriber 1件を確認した場合だけARMを1回publishして終了する同期補助を追加した。
+古い姿勢ではARM 0件でtimeoutし、明示的にcontroller/姿勢状態を初期化した新しい試行
+では実カメラ候補から模擬ARM 1件を確認した。mask除去後は非ゼロ候補0件、再ARM 0件、
+物理Roomba topic不存在だった。これは手順改善の実カメラ非走行PASSであり、実Picoとの
+同期や物理走行は未確認である。[同期補助報告](ATTENDED_NAV_ARM_SYNC_REPORT_20261029.md)
+
 ## 6. ARM ACK消失の原因と修正
 
 初回短縮EではPicoがARM generationを受理した一方、hostは0/7 byteでtimeoutした。MicroPythonのnon-blocking `socket.send()`が`None`を返した際、旧実装が残り全byteを送信済みと誤認したことが根因だった。
@@ -46,7 +59,11 @@ P3-2ではsocket所有者を一元化したまま、固定応答待ちを最大1
 
 成果は、限定された固定環境でAI認識から実機低速単発まで到達し、実際に生じたARM ACK消失とdeadline阻害を原因ベースで修復した点にある。残る課題は、実機動画の収録、厳密host STOP begin trace、一般環境の検出評価、実機encoder統合、連続運転評価である。これらを未確認のまま無人連続走行の安全性は主張しない。
 
-提出準備時点の最新全回帰は373/373 PASSである。本文中の369/369はP3-2修正時点の記録であり、後続の文書・試験追加後に373件へ増えた。公式提出形式はリポジトリ内で確認できておらず、最終提出前に外部の課題要項と照合する必要がある。
+提出証拠パッケージ作成時点の全回帰は373/373 PASSであり、その根拠はコミット
+`299e065`の証拠対応表に記録した。本文中の369/369はP3-2修正時点の記録である。
+ARM同期補助の7テスト追加後は380/380 PASSとなった。いずれも各時点の結果であり、
+件数を遡って書き換えない。公式提出形式はリポジトリ内で確認できておらず、最終提出前に
+外部の課題要項と照合する必要がある。
 
 ## 参考資料
 
@@ -56,4 +73,18 @@ P3-2ではsocket所有者を一元化したまま、固定応答待ちを最大1
 - [素材一覧](asset_inventory.md)
 - `AI_ATTENDED_FLOOR_DEADLINE_REPORT_20261029.md`
 - `P3_2_DEADLINE_IO_SEPARATION_REPORT_20261029.md`
+
+## PDF編集時の図配置案
+
+1. 第2章直後: USB camera→YOLO/ArUco→ROS 2→Pico→Roombaの構成図。
+2. 第4章直後: simulation、dry-run、実カメラ非走行、有人実機の証拠区分表。
+3. 第5章: 10月28日AI床面PASS、10月29日P3-2浮上PASS、同日追加試行FAILを
+   同じ時間軸に混ぜず、3つの小表として配置。
+4. 第6章: ARM_PENDING→ACK完全送信→ARM_COMMITの状態遷移図。
+5. 第7章: Drive、ACK待ち中断、STOP、socket closeのdeadline時系列図。
+6. 第8章: `artifacts/odometry_dryrun/e2e/offline/trajectory.svg`。図注に
+   「mock/replay、実機encoder未統合」と明記。
+
+本文6–8ページに収める場合、詳細ログは参考資料へ移し、各図には`実測`、`非走行`、
+`simulation`、`未確認`の区分を必ず付ける。
 

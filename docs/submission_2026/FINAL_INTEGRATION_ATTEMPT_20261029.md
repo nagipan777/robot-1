@@ -46,7 +46,11 @@ Navigation非ゼロ候補を観測→直後に単一ARM」を同一の非走行�
 なしで、その同期手順が1回だけARM候補を生成し、古い候補では何もしないことを
 dry-run検証する。
 
-この同期補助は同日実装され、mock ROS 2 E2Eと全回帰380/380をPASSした。実カメラ
-候補および実機との確認は別ゲートとして残す。詳細は
+この同期補助は同日実装され、mock ROS 2 E2Eと全回帰380/380をPASSした。さらに
+実カメラ、実ArUco姿勢、実mask検出から生成された新鮮なNavigation候補で、模擬ARM
+subscriberへgenerationを1回だけ送る非走行E2EをPASSした。古いArUco姿勢ではARM
+0件のままtimeoutし、controller/姿勢状態の明示的な初期化後だけ候補が復帰した。
+mask除去後は非ゼロ候補0件、再ARM 0件、物理Roomba topicは全期間不存在だった。
+実Pico/Roombaとの同期確認は別ゲートとして残す。詳細は
 `docs/submission_2026/ATTENDED_NAV_ARM_SYNC_REPORT_20261029.md`を参照する。
 

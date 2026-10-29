@@ -62,3 +62,15 @@ maskとArUco ID 0を使用した。PicoとRoombaは未接続、物理Roomba topi
 STOP/Safe、通信、重複、物理配置、人間の当該試行承認が必要であり、本結果だけで
 ARM・Driveを許可しない。
 
+## 午後の再現確認
+
+同じ固定環境で再実行した。検出途絶、同一位置への再配置、ArUco喪失・復帰を確認後、
+最初の同期ゲートは`robot_pose_stale`により新鮮なNavigation候補を受け取れず、ARM
+0件でtimeoutした。これは期待するfail-closed動作である。`aruco-pose`と
+`vision-turn-controller`を新しい試行として再起動すると、`linear.x=0.08 m/s`の候補が
+復帰し、模擬subscriberはgeneration `323456789`を1件だけ受信した。
+
+その後maskを除去した5秒間はNavigation出力0件、再ARM 0件で、
+`/roomba/cmd_vel_unstamped`は最後まで存在しなかった。Pico、Roomba、物理bridgeは
+未接続である。この再現は手順改善の非走行PASSであり、実機同期PASSではない。
+
