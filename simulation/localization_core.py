@@ -62,6 +62,8 @@ class WheelOdometry:
         wheel_diameter_m,
         wheel_separation_m,
         max_tick_delta=2000,
+        max_linear_speed_m_s=None,
+        max_angular_speed_rad_s=None,
     ):
         self.counts_per_rev = _finite(encoder_counts_per_rev, "encoder_counts_per_rev")
         self.wheel_diameter = _finite(wheel_diameter_m, "wheel_diameter_m")
@@ -71,6 +73,20 @@ class WheelOdometry:
         if not isinstance(max_tick_delta, int) or max_tick_delta < 1:
             raise ValueError("max_tick_delta must be a positive integer")
         self.max_tick_delta = max_tick_delta
+        self.max_linear_speed = (
+            None
+            if max_linear_speed_m_s is None
+            else _finite(max_linear_speed_m_s, "max_linear_speed_m_s")
+        )
+        self.max_angular_speed = (
+            None
+            if max_angular_speed_rad_s is None
+            else _finite(max_angular_speed_rad_s, "max_angular_speed_rad_s")
+        )
+        if self.max_linear_speed is not None and self.max_linear_speed <= 0:
+            raise ValueError("max_linear_speed_m_s must be positive")
+        if self.max_angular_speed is not None and self.max_angular_speed <= 0:
+            raise ValueError("max_angular_speed_rad_s must be positive")
         self.pose = Pose2D()
         self.previous = None
         self.last_timestamp = None
@@ -96,6 +112,18 @@ class WheelOdometry:
         dr = dr_ticks * metres_per_tick
         distance = (dl + dr) / 2.0
         delta_yaw = (dr - dl) / self.wheel_separation
+        linear_velocity = distance / dt
+        angular_velocity = delta_yaw / dt
+        if (
+            self.max_linear_speed is not None
+            and abs(linear_velocity) > self.max_linear_speed
+        ):
+            raise ValueError("linear velocity exceeds configured maximum")
+        if (
+            self.max_angular_speed is not None
+            and abs(angular_velocity) > self.max_angular_speed
+        ):
+            raise ValueError("angular velocity exceeds configured maximum")
         midpoint = self.pose.yaw + delta_yaw / 2.0
         self.pose = Pose2D(
             self.pose.x + distance * math.cos(midpoint),
@@ -106,8 +134,8 @@ class WheelOdometry:
         self.last_timestamp = timestamp
         return WheelUpdate(
             self.pose,
-            distance / dt,
-            delta_yaw / dt,
+            linear_velocity,
+            angular_velocity,
             timestamp,
             True,
             dl_ticks,

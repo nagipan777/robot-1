@@ -35,6 +35,8 @@ class WheelOdometryNode(Node):
         self.declare_parameter("wheel_separation_m", 0.235)
         self.declare_parameter("max_tick_delta", 2000)
         self.declare_parameter("max_time_gap_s", 1.0)
+        self.declare_parameter("max_linear_speed_m_s", 1.0)
+        self.declare_parameter("max_angular_speed_rad_s", 10.0)
         self.declare_parameter(
             "pose_covariance_diagonal", [0.0025, 0.0025, 999.0, 999.0, 999.0, 0.01]
         )
@@ -53,6 +55,8 @@ class WheelOdometryNode(Node):
             self.get_parameter("wheel_diameter_m").value,
             self.get_parameter("wheel_separation_m").value,
             self.get_parameter("max_tick_delta").value,
+            self.get_parameter("max_linear_speed_m_s").value,
+            self.get_parameter("max_angular_speed_rad_s").value,
         )
         self.processor = DryRunOdometry(
             self.estimator, self.get_parameter("max_time_gap_s").value
@@ -149,10 +153,15 @@ class WheelOdometryNode(Node):
             self.processor.connected = False
             self.get_logger().warning("Rejected encoder sample: {}".format(error))
             return
-        if processed.update is None:
+        if processed.update is None or not processed.integrated:
             self.write_csv(processed)
-            self.get_logger().warning(
-                "Encoder integration paused: state={} error={}".format(
+            log = (
+                self.get_logger().warning
+                if processed.update is None
+                else self.get_logger().info
+            )
+            log(
+                "Encoder integration paused: state={} reason={}".format(
                     sample.communication_state, sample.error or processed.reason
                 )
             )

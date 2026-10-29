@@ -1,0 +1,30 @@
+{
+  "arm_sent": false,
+  "counts": [
+    [
+      65534,
+      100
+    ],
+    [
+      2,
+      104
+    ],
+    [
+      6,
+      108
+    ]
+  ],
+  "counts_topic": "/roomba/encoder_counts",
+  "counts_type": "std_msgs/msg/UInt16MultiArray",
+  "data_kind": "mock_ros2",
+  "drive_sent": false,
+  "invalid_counts_published": 0,
+  "invalid_status_published": 1,
+  "navigation_connected": false,
+  "odom_topic": "/roomba/odom",
+  "odom_type": "nav_msgs/msg/Odometry",
+  "passed": true,
+  "real_uart_used": false,
+  "status_topic": "/roomba/encoder_status",
+  "tf_published": false
+}

@@ -62,6 +62,8 @@ COPY pico_dry_run_bridge.py /usr/local/bin/pico-dry-run-bridge
 COPY differential_drive.py /usr/local/bin/differential_drive.py
 COPY latency_trace.py /usr/local/bin/latency_trace.py
 COPY roomba_tcp_transport.py /usr/local/bin/roomba_tcp_transport.py
+COPY roomba_encoder_ros_node.py /usr/local/bin/roomba-encoder-ros-node
+COPY roomba_encoder_ros_node.py /usr/local/bin/roomba_encoder_ros_node.py
 COPY roomba_bridge_tcp.py /usr/local/bin/roomba-bridge-tcp
 COPY deadline_ros_timer_dry_run.py /usr/local/bin/deadline-ros-timer-dry-run
 COPY roomba_latency_probe.py /usr/local/bin/roomba-latency-probe
@@ -87,6 +89,7 @@ COPY odometry_aruco_ab.py /usr/local/bin/odometry-aruco-ab
 COPY run_odometry_dryrun.py /usr/local/bin/run-odometry-dryrun
 COPY roomba_odometry.rviz /etc/roomba-odometry.rviz
 COPY odometry_ros_e2e.py /usr/local/bin/odometry-ros-e2e
+COPY roomba_encoder_ros_e2e.py /usr/local/bin/roomba-encoder-ros-e2e
 COPY odometry_dryrun_e2e.csv /etc/odometry-dryrun-e2e.csv
 COPY localization_fusion_node.py /usr/local/bin/localization-fusion-node
 COPY localization_fusion_node.py /usr/local/bin/localization_fusion_node.py
@@ -118,6 +121,7 @@ RUN chmod +x /usr/local/bin/start-simulation /usr/local/bin/webcam-bridge \
     /usr/local/bin/navigation-latency-probe \
     /usr/local/bin/unstamped-cmd-relay /usr/local/bin/roomba-dry-run-adapter \
     /usr/local/bin/cmd-vel-output-adapter \
+    /usr/local/bin/roomba-encoder-ros-node \
     /usr/local/bin/pico-dry-run-bridge \
     /usr/local/bin/e2e-dry-run-recorder /usr/local/bin/ai-dry-run-gate-test \
     /usr/local/bin/dry-run-pose-publisher \
@@ -129,6 +133,7 @@ RUN chmod +x /usr/local/bin/start-simulation /usr/local/bin/webcam-bridge \
     /usr/local/bin/run-wheel-monitor-dryrun \
     /usr/local/bin/odometry-aruco-ab /usr/local/bin/run-odometry-dryrun \
     /usr/local/bin/odometry-ros-e2e \
+    /usr/local/bin/roomba-encoder-ros-e2e \
     /usr/local/bin/localization-fusion-node /usr/local/bin/localization-preview-test \
     /usr/local/bin/recording-status /usr/local/bin/presentation-visualizer \
     && python3 /tmp/add-litter-marker-display.py \

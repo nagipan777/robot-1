@@ -61,6 +61,22 @@ class EncoderAndOdometryTests(unittest.TestCase):
         with self.assertRaises((TypeError, ValueError)):
             odom.update(-1, 0, 3.0)
 
+    def test_configured_velocity_limits_reject_without_committing_pose(self):
+        odom = WheelOdometry(
+            100.0,
+            0.1,
+            0.2,
+            max_tick_delta=1000,
+            max_linear_speed_m_s=0.1,
+            max_angular_speed_rad_s=1.0,
+        )
+        odom.update(0, 0, 1.0)
+        pose_before = odom.pose
+        with self.assertRaisesRegex(ValueError, "linear velocity"):
+            odom.update(100, 100, 1.1)
+        self.assertEqual(odom.pose, pose_before)
+        self.assertEqual(odom.previous, (0, 0))
+
 
 class FusionTests(unittest.TestCase):
     def fusion(self, **overrides):

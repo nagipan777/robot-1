@@ -60,6 +60,14 @@ class OdometryDryRunCoreTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "jump"):
             processor.process(self.sample(2.5, 500, 2, 3))
 
+    def test_timestamp_regression_is_rejected_without_integration(self):
+        processor = self.processor()
+        processor.process(self.sample(2.0, 100, 100, 1))
+        pose_before = processor.estimator.pose
+        with self.assertRaisesRegex(ValueError, "timestamp"):
+            processor.process(self.sample(1.9, 101, 101, 2))
+        self.assertEqual(processor.estimator.pose, pose_before)
+
     def test_csv_validation_rejects_duplicate_time_and_sequence(self):
         content = "timestamp,left_encoder,right_encoder,valid,communication_state,sequence,error\n1,10,10,true,connected,1,\n1,11,11,true,connected,2,\n"
         with tempfile.TemporaryDirectory() as directory:

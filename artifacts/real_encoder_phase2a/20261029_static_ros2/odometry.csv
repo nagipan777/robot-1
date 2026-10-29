@@ -1,0 +1,11 @@
+timestamp_s,left_ticks,right_ticks,left_delta,right_delta,valid,communication_state,error,integrated,odom_x_m,odom_y_m,odom_yaw_rad,linear_m_s,angular_rad_s,aruco_relative_x_m,aruco_relative_y_m,aruco_relative_yaw_rad,position_error_m,yaw_error_rad,aruco_age_s
+1793265197.5750062,259,3960,0,0,True,connected,,False,0.0,0.0,0.0,0.0,0.0,,,,,,
+1793265197.8324862,259,3960,0,0,True,connected,,True,0.0,0.0,0.0,0.0,0.0,,,,,,
+1793265198.001386,259,3960,0,0,True,connected,,True,0.0,0.0,0.0,0.0,0.0,,,,,,
+1793265198.279985,259,3960,0,0,True,connected,,True,0.0,0.0,0.0,0.0,0.0,,,,,,
+1793265198.4237893,259,3960,0,0,True,connected,,True,0.0,0.0,0.0,0.0,0.0,,,,,,
+1793265198.6011546,259,3960,0,0,True,connected,,True,0.0,0.0,0.0,0.0,0.0,,,,,,
+1793265198.815964,259,3960,0,0,True,connected,,True,0.0,0.0,0.0,0.0,0.0,,,,,,
+1793265200.0521002,259,3960,0,0,True,connected,,False,0.0,0.0,0.0,0.0,0.0,,,,,,
+1793265200.1099238,259,3960,0,0,True,connected,,True,0.0,0.0,0.0,0.0,0.0,,,,,,
+1793265200.451015,259,3960,0,0,True,connected,,True,0.0,0.0,0.0,0.0,0.0,,,,,,

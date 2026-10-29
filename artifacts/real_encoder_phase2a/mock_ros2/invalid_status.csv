@@ -1,0 +1,2 @@
+timestamp,wall_time_ns,monotonic_ns,left_encoder,right_encoder,valid,communication_state,sequence,error
+1793264489.3899739,1793264489389973684,63825753082553,,,False,disconnected,1,partial encoder response 3/7

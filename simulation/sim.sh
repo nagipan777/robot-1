@@ -333,6 +333,65 @@ case "${1:-help}" in
        exec /usr/local/bin/roomba-bridge-tcp --ros-args -p host:="$1" -p port:="$2" -p drive_enabled:=false -p diagnostic_on_connect:=true -p watchdog_test_mode:=false -p command_topic:=/roomba/cmd_vel_unstamped' \
       -- "$host" "$port"
     ;;
+  roomba-encoder-ros-static)
+    if [ "$#" -lt 4 ] || [ "$#" -gt 6 ] || [ "$3" != "STATIC_STOP_FIRST" ]; then
+      echo "Usage: $0 roomba-encoder-ros-static PICO_IP STATIC_STOP_FIRST OUTPUT_DIR [COUNT [PORT]]" >&2
+      exit 2
+    fi
+    host="$2"
+    output_dir="$4"
+    count="${5:-10}"
+    port="${6:-9000}"
+    case "$count" in ""|*[!0-9]*) echo "COUNT must be a positive integer" >&2; exit 2 ;; esac
+    if [ "$count" -lt 1 ]; then
+      echo "COUNT must be a positive integer" >&2
+      exit 2
+    fi
+    mkdir -p "$output_dir"
+    output_dir="$(cd "$output_dir" && pwd)"
+    container_output=/tmp/roomba-encoder-ros-static
+    "${compose[@]}" exec -T simulator bash -lc '
+      set -e
+      source /opt/create3_ws/install/setup.bash
+      exec 9>/tmp/roomba-physical-bridge.lock
+      if ! flock -n 9; then
+        echo "Refusing duplicate physical Roomba owner: another session owns the lock" >&2
+        exit 73
+      fi
+      for cmdline_path in /proc/[0-9]*/cmdline; do
+        [ -r "$cmdline_path" ] || continue
+        running_command="$(tr "\000" " " < "$cmdline_path")"
+        case "$running_command" in
+          python3\ /usr/local/bin/roomba-bridge-tcp\ *|/usr/bin/python3\ /usr/local/bin/roomba-bridge-tcp\ *|python3\ /usr/local/bin/roomba-encoder-ros-node\ *|/usr/bin/python3\ /usr/local/bin/roomba-encoder-ros-node\ *)
+            echo "Refusing orphan physical Roomba owner: $running_command" >&2
+            exit 74
+            ;;
+        esac
+      done
+      output="$1"
+      rm -rf "$output"
+      mkdir -p "$output"
+      /usr/local/bin/wheel-odometry-node --ros-args \
+        --params-file /etc/roomba-odometry-observer.yaml \
+        -p odometry_enabled:=true \
+        -p aruco_topic:=/unused/aruco \
+        -p csv_path:="$output/odometry.csv" &
+      wheel_pid=$!
+      cleanup() {
+        kill -INT "$wheel_pid" 2>/dev/null || true
+        wait "$wheel_pid" 2>/dev/null || true
+      }
+      trap cleanup EXIT INT TERM
+      sleep 1
+      /usr/local/bin/roomba-encoder-ros-node --ros-args \
+        -p diagnostic_enabled:=true \
+        -p static_stop_first_confirmation:=STATIC_STOP_FIRST \
+        -p host:="$2" -p port:="$3" -p sample_count:="$4" \
+        -p csv_path:="$output/encoder_status.csv"
+    ' -- "$container_output" "$host" "$port" "$count"
+    "${compose[@]}" cp "simulator:${container_output}/." "$output_dir"
+    echo "Static ROS encoder artifacts saved: $output_dir"
+    ;;
   roomba-short-e-bridge|roomba-attended-floor-bridge|roomba-trial-session)
     unified_session=false
     if [ "$1" = "roomba-attended-floor-bridge" ] || [ "$1" = "roomba-trial-session" ]; then
@@ -905,6 +964,6 @@ case "${1:-help}" in
     "${compose[@]}" cp simulator:/tmp/oscillation_summary.json ../artifacts/oscillation_diagnostics/summary.json
     ;;
   *)
-    echo "Usage: $0 {up|camera-up|vision-integration-up|real-camera-dry-run-up [PICO_IP [X Y YAW]]|real-camera-aruco-dry-run-up|real-camera-aruco-minimal-up|real-camera-aruco-minimal-status|real-camera-aruco-minimal-down|real-camera-ai-dry-run-up|real-camera-ai-dry-run-status|real-camera-ai-dry-run-down|nav-test-up|down|stop|shell|status|cmd-adapter [dry_run|gazebo|roomba] [INPUT_TOPIC]|pico-cmd-dry-run PICO_IP [PORT]|e2e-record {A|B|C|D|E} [SECONDS]|dry-run-pose X Y YAW|camera-status|litter-add X Y|litter-move X Y|litter-remove|logs|teleop|roomba-tcp PICO_IP [PORT]|roomba-tcp-diagnostic PICO_IP [PORT]|roomba-short-e-bridge PICO_IP WHEELS_LIFTED [PORT]|roomba-attended-floor-bridge PICO_IP ATTENDED_FLOOR [PORT]|roomba-trial-session PICO_IP ATTENDED_FLOOR [PORT]|roomba-tcp-watchdog PICO_IP WHEELS_LIFTED [PORT]|roomba-wheel-lift-test MODE [WHEELS_LIFTED]|aruco-pose|aruco-pose-start|aruco-pose-stop|localization-wheel-preview|localization-fusion-preview|localization-preview-test|localization-hardware-live|odometry-dryrun-e2e|wheel-monitor-dryrun|test-marker|record-status|presentation-layout|replay-create3-trajectory [RESULT_JSON [SPEED]]|ros-status|control-turn|control-approach|control-off|known-target-test|known-target-abort-test|multi-target-test|synthetic-coordinate-test|yolo-navigation-test|oscillation-diagnostics [SECONDS]}"
+    echo "Usage: $0 {up|camera-up|vision-integration-up|real-camera-dry-run-up [PICO_IP [X Y YAW]]|real-camera-aruco-dry-run-up|real-camera-aruco-minimal-up|real-camera-aruco-minimal-status|real-camera-aruco-minimal-down|real-camera-ai-dry-run-up|real-camera-ai-dry-run-status|real-camera-ai-dry-run-down|nav-test-up|down|stop|shell|status|cmd-adapter [dry_run|gazebo|roomba] [INPUT_TOPIC]|pico-cmd-dry-run PICO_IP [PORT]|e2e-record {A|B|C|D|E} [SECONDS]|dry-run-pose X Y YAW|camera-status|litter-add X Y|litter-move X Y|litter-remove|logs|teleop|roomba-tcp PICO_IP [PORT]|roomba-tcp-diagnostic PICO_IP [PORT]|roomba-encoder-ros-static PICO_IP STATIC_STOP_FIRST OUTPUT_DIR [COUNT [PORT]]|roomba-short-e-bridge PICO_IP WHEELS_LIFTED [PORT]|roomba-attended-floor-bridge PICO_IP ATTENDED_FLOOR [PORT]|roomba-trial-session PICO_IP ATTENDED_FLOOR [PORT]|roomba-tcp-watchdog PICO_IP WHEELS_LIFTED [PORT]|roomba-wheel-lift-test MODE [WHEELS_LIFTED]|aruco-pose|aruco-pose-start|aruco-pose-stop|localization-wheel-preview|localization-fusion-preview|localization-preview-test|localization-hardware-live|odometry-dryrun-e2e|wheel-monitor-dryrun|test-marker|record-status|presentation-layout|replay-create3-trajectory [RESULT_JSON [SPEED]]|ros-status|control-turn|control-approach|control-off|known-target-test|known-target-abort-test|multi-target-test|synthetic-coordinate-test|yolo-navigation-test|oscillation-diagnostics [SECONDS]}"
     ;;
 esac

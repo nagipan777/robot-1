@@ -51,7 +51,9 @@ class LocalizationConfigTests(unittest.TestCase):
     def test_roomba_odometry_observer_is_opt_in_and_navigation_independent(self):
         config = (ROOT / "simulation/roomba_odometry_observer.yaml").read_text()
         self.assertIn("odometry_enabled: false", config)
-        self.assertIn("input_topic: /roomba/encoder_counts", config)
+        self.assertIn("input_topic: /roomba/encoder_status", config)
+        self.assertIn("max_linear_speed_m_s: 1.0", config)
+        self.assertIn("max_angular_speed_rad_s: 10.0", config)
         self.assertIn("output_topic: /roomba/odom", config)
         self.assertIn("frame_id: roomba_odom", config)
         self.assertIn("child_frame_id: roomba_base_link", config)
@@ -60,10 +62,31 @@ class LocalizationConfigTests(unittest.TestCase):
         self.assertNotIn('create_publisher(PoseStamped, "/robot/pose"', node)
         self.assertNotIn("import socket", node)
         self.assertNotIn("import serial", node)
+        self.assertIn(
+            "if processed.update is None or not processed.integrated:", node
+        )
         rviz = (ROOT / "simulation/roomba_odometry.rviz").read_text()
         self.assertIn("Fixed Frame: roomba_odom", rviz)
         self.assertIn("Value: /roomba/odom", rviz)
         self.assertNotIn("TFDisplay", rviz)
+
+    def test_static_encoder_ros_node_is_opt_in_and_drive_free(self):
+        source = (ROOT / "simulation/roomba_encoder_ros_node.py").read_text()
+        self.assertIn('declare_parameter("diagnostic_enabled", False)', source)
+        self.assertIn("STATIC_STOP_FIRST", source)
+        self.assertIn('"/roomba/encoder_counts"', source)
+        self.assertIn('"/roomba/encoder_status"', source)
+        self.assertIn("UInt16MultiArray", source)
+        self.assertNotIn(".arm(", source)
+        self.assertNotIn(".send_twist(", source)
+        self.assertNotIn("TransformBroadcaster", source)
+        launcher = (ROOT / "simulation/sim.sh").read_text()
+        section = launcher.split("roomba-encoder-ros-static)", 1)[1].split(
+            "roomba-short-e-bridge|", 1
+        )[0]
+        self.assertIn("/tmp/roomba-physical-bridge.lock", section)
+        self.assertIn("STATIC_STOP_FIRST", section)
+        self.assertIn("odometry_enabled:=true", section)
 
 
 if __name__ == "__main__":
