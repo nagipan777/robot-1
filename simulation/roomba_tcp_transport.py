@@ -18,10 +18,12 @@ DIAGNOSTIC_OI_MODE_LIVE = 0x03
 CONTROL_ARM = 0x04
 GENERATION_DRIVE = 0x05
 SEQUENCED_DRIVE = 0x06
+DIAGNOSTIC_ENCODERS = 0x07
 DIAGNOSTIC_STOP_RESPONSE = 0x81
 DIAGNOSTIC_OI_MODE_RESPONSE = 0x82
 CONTROL_ARM_RESPONSE = 0x84
 SEQUENCED_DRIVE_RESPONSE = 0x86
+DIAGNOSTIC_ENCODERS_RESPONSE = 0x87
 DIAGNOSTIC_ERROR = 0xE0
 ARM_ACCEPTED = 0x01
 DRIVE_ACK_VALIDATED = 0x01
@@ -33,10 +35,14 @@ STOP_ACK_ROBOT_ZERO = 0x04
 STOP_ACK_COMPLETE = (
     STOP_ACK_VALIDATED | STOP_ACK_UART_WRITTEN | STOP_ACK_ROBOT_ZERO
 )
+ENCODER_ACK_STOP_WRITTEN = 0x01
+ENCODER_ACK_QUERY_COMPLETE = 0x02
+ENCODER_ACK_COMPLETE = ENCODER_ACK_STOP_WRITTEN | ENCODER_ACK_QUERY_COMPLETE
 STOP_DIAGNOSTIC_RESPONSE_SIZE = 7
 OI_MODE_RESPONSE_SIZE = 3
 ARM_RESPONSE_SIZE = 7
 DRIVE_RESPONSE_SIZE = 13
+ENCODER_RESPONSE_SIZE = 7
 
 
 class RoombaDiagnosticError(Exception):
@@ -447,6 +453,31 @@ class RoombaTcpTransport:
         if mode not in (0, 1, 2, 3):
             raise RoombaDiagnosticError("invalid OI mode: {}".format(mode))
         return mode
+
+    def query_encoders(self):
+        """Return unsigned packet 43/44 counts from a STOP-first diagnostic."""
+        self.send_packet(bytes([DIAGNOSTIC_MAGIC, DIAGNOSTIC_ENCODERS]))
+        response = self._receive_exact(
+            self.socket,
+            ENCODER_RESPONSE_SIZE,
+            operation="encoder diagnostic",
+        )
+        if response[:2] != bytes(
+            [DIAGNOSTIC_MAGIC, DIAGNOSTIC_ENCODERS_RESPONSE]
+        ):
+            raise RoombaDiagnosticError(
+                "unexpected encoder response: raw={}".format(response.hex())
+            )
+        status = response[2]
+        if status != ENCODER_ACK_COMPLETE:
+            raise RoombaDiagnosticError(
+                "encoder query was not confirmed: status=0x{:02x}, raw={}".format(
+                    status, response.hex()
+                )
+            )
+        self.armed_generation = None
+        self.drive_sequence = 0
+        return struct.unpack(">HH", response[3:])
 
     def send_twist(
         self,

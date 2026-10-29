@@ -320,6 +320,79 @@ class PicoRelayProtocolTests(unittest.TestCase):
         )
         self.assertEqual(uart.writes[:3], [relay.STOP, relay.PAUSE_STREAM, query])
 
+    def test_encoder_diagnostic_is_stop_first_and_returns_unsigned_counts(self):
+        relay, uart = load_relay()
+        query = bytes(
+            [
+                relay.QUERY_LIST,
+                2,
+                relay.SENSOR_LEFT_ENCODER_COUNTS,
+                relay.SENSOR_RIGHT_ENCODER_COUNTS,
+            ]
+        )
+        uart.responses[query] = b"\xff\xfe\x00\x02"
+        relay.motion_latch.arm(7)
+        connection = FakeConnection(max_send=2)
+
+        remaining, drives = relay.forward_valid_frames(
+            bytearray([relay.DIAGNOSTIC_MAGIC, relay.DIAGNOSTIC_ENCODERS]),
+            connection,
+        )
+
+        self.assertEqual(remaining, bytearray())
+        self.assertEqual(drives, 0)
+        self.assertEqual(
+            uart.writes[:3], [relay.STOP, relay.PAUSE_STREAM, query]
+        )
+        self.assertEqual(
+            bytes(connection.sent),
+            bytes(
+                [
+                    relay.DIAGNOSTIC_MAGIC,
+                    relay.DIAGNOSTIC_ENCODERS_RESPONSE,
+                    relay.ENCODER_ACK_STOP_WRITTEN
+                    | relay.ENCODER_ACK_QUERY_COMPLETE,
+                ]
+            )
+            + b"\xff\xfe\x00\x02",
+        )
+        self.assertEqual(relay.motion_latch.state, relay.motion_latch.STOPPED)
+
+    def test_partial_encoder_uart_response_is_not_reported_as_valid(self):
+        relay, uart = load_relay()
+        query = bytes(
+            [
+                relay.QUERY_LIST,
+                2,
+                relay.SENSOR_LEFT_ENCODER_COUNTS,
+                relay.SENSOR_RIGHT_ENCODER_COUNTS,
+            ]
+        )
+        uart.responses[query] = b"\x12\x34\x56"
+        connection = FakeConnection()
+
+        relay.forward_valid_frames(
+            bytearray([relay.DIAGNOSTIC_MAGIC, relay.DIAGNOSTIC_ENCODERS]),
+            connection,
+        )
+
+        self.assertEqual(connection.sent[2], relay.ENCODER_ACK_STOP_WRITTEN)
+        self.assertEqual(bytes(connection.sent[3:]), b"\x00\x00\x00\x00")
+
+    def test_encoder_diagnostic_stop_write_failure_latches_and_skips_query(self):
+        relay, uart = load_relay()
+        uart.partial_write_for = relay.STOP
+        connection = FakeConnection()
+
+        relay.forward_valid_frames(
+            bytearray([relay.DIAGNOSTIC_MAGIC, relay.DIAGNOSTIC_ENCODERS]),
+            connection,
+        )
+
+        self.assertEqual(uart.writes, [relay.STOP])
+        self.assertEqual(connection.sent[2], 0)
+        self.assertEqual(relay.motion_latch.state, relay.motion_latch.LATCHED_STOP)
+
     def test_stop_diagnostic_discards_stale_uart_bytes_before_query(self):
         relay, uart = load_relay()
         query = bytes(

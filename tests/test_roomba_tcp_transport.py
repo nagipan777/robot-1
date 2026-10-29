@@ -12,11 +12,14 @@ from simulation.roomba_tcp_transport import (
     DIAGNOSTIC_OI_MODE,
     DIAGNOSTIC_OI_MODE_LIVE,
     DIAGNOSTIC_OI_MODE_RESPONSE,
+    DIAGNOSTIC_ENCODERS,
+    DIAGNOSTIC_ENCODERS_RESPONSE,
     DIAGNOSTIC_STOP,
     DIAGNOSTIC_STOP_RESPONSE,
     CONTROL_ARM,
     CONTROL_ARM_RESPONSE,
     DRIVE_ACK_COMPLETE,
+    ENCODER_ACK_COMPLETE,
     SEQUENCED_DRIVE,
     SEQUENCED_DRIVE_RESPONSE,
     GENERATION_DRIVE,
@@ -461,6 +464,88 @@ class RoombaTcpTransportTests(unittest.TestCase):
             transport.connect()
             transport.close(send_stop=False)
         self.assertEqual(server.received, [STOP_PACKET])
+
+    def test_encoder_query_accepts_fragmented_dedicated_response(self):
+        response = (
+            bytes(
+                [
+                    DIAGNOSTIC_MAGIC,
+                    DIAGNOSTIC_ENCODERS_RESPONSE,
+                    ENCODER_ACK_COMPLETE,
+                ]
+            )
+            + b"\xff\xfe\x00\x02"
+        )
+
+        def encoder_reply(connection, received):
+            connection.sendall(RELAY_READY)
+            received.append(receive_exact(connection, len(STOP_PACKET)))
+            received.append(receive_exact(connection, 2))
+            for fragment in (response[:1], response[1:4], response[4:]):
+                connection.sendall(fragment)
+
+        with LocalRelayServer([encoder_reply]) as server:
+            transport = RoombaTcpTransport(server.host, server.port)
+            transport.connect()
+            transport.armed_generation = 123
+            self.assertEqual(transport.query_encoders(), (65534, 2))
+            self.assertIsNone(transport.armed_generation)
+            transport.close(send_stop=False)
+        self.assertEqual(
+            server.received,
+            [STOP_PACKET, bytes([DIAGNOSTIC_MAGIC, DIAGNOSTIC_ENCODERS])],
+        )
+
+    def test_encoder_query_rejects_incomplete_uart_status(self):
+        response = (
+            bytes(
+                [
+                    DIAGNOSTIC_MAGIC,
+                    DIAGNOSTIC_ENCODERS_RESPONSE,
+                    0x01,
+                ]
+            )
+            + b"\x00\x00\x00\x00"
+        )
+
+        def incomplete_reply(connection, received):
+            connection.sendall(RELAY_READY)
+            received.append(receive_exact(connection, len(STOP_PACKET)))
+            received.append(receive_exact(connection, 2))
+            connection.sendall(response)
+
+        with LocalRelayServer([incomplete_reply]) as server:
+            transport = RoombaTcpTransport(server.host, server.port)
+            transport.connect()
+            with self.assertRaisesRegex(
+                RoombaDiagnosticError, "encoder query was not confirmed"
+            ):
+                transport.query_encoders()
+            transport.close(send_stop=False)
+
+    def test_encoder_query_partial_tcp_response_is_not_success(self):
+        def partial_reply(connection, received):
+            connection.sendall(RELAY_READY)
+            received.append(receive_exact(connection, len(STOP_PACKET)))
+            received.append(receive_exact(connection, 2))
+            connection.sendall(
+                bytes(
+                    [
+                        DIAGNOSTIC_MAGIC,
+                        DIAGNOSTIC_ENCODERS_RESPONSE,
+                        ENCODER_ACK_COMPLETE,
+                    ]
+                )
+            )
+
+        with LocalRelayServer([partial_reply]) as server:
+            transport = RoombaTcpTransport(server.host, server.port)
+            transport.connect()
+            with self.assertRaisesRegex(
+                ConnectionError, r"encoder diagnostic \(3/7 bytes"
+            ):
+                transport.query_encoders()
+            transport.close(send_stop=False)
 
     def test_invalid_ready_is_rejected(self):
         def invalid(connection, _received):

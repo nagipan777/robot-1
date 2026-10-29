@@ -41,10 +41,12 @@ DIAGNOSTIC_OI_MODE_LIVE = 0x03
 CONTROL_ARM = 0x04
 GENERATION_DRIVE = 0x05
 SEQUENCED_DRIVE = 0x06
+DIAGNOSTIC_ENCODERS = 0x07
 DIAGNOSTIC_STOP_RESPONSE = 0x81
 DIAGNOSTIC_OI_MODE_RESPONSE = 0x82
 CONTROL_ARM_RESPONSE = 0x84
 SEQUENCED_DRIVE_RESPONSE = 0x86
+DIAGNOSTIC_ENCODERS_RESPONSE = 0x87
 DIAGNOSTIC_ERROR = 0xE0
 ARM_ACCEPTED = 0x01
 ARM_REJECTED_LOCK = 0x02
@@ -54,6 +56,8 @@ DRIVE_ACK_UART_WRITTEN = 0x02
 STOP_ACK_VALIDATED = 0x01
 STOP_ACK_UART_WRITTEN = 0x02
 STOP_ACK_ROBOT_ZERO = 0x04
+ENCODER_ACK_STOP_WRITTEN = 0x01
+ENCODER_ACK_QUERY_COMPLETE = 0x02
 SENSORS = 142
 QUERY_LIST = 149
 PAUSE_RESUME_STREAM = 150
@@ -61,6 +65,8 @@ PAUSE_STREAM = bytes([PAUSE_RESUME_STREAM, 0])
 SENSOR_OI_MODE = 35
 SENSOR_REQUESTED_RIGHT_VELOCITY = 41
 SENSOR_REQUESTED_LEFT_VELOCITY = 42
+SENSOR_LEFT_ENCODER_COUNTS = 43
+SENSOR_RIGHT_ENCODER_COUNTS = 44
 DIAGNOSTIC_SENTINEL = 32767
 CONTROL_ARM_SIZE = 6
 GENERATION_DRIVE_SIZE = 11
@@ -501,6 +507,37 @@ def handle_oi_mode_diagnostic(connection, stop_first=True):
     send_all(connection, bytes([DIAGNOSTIC_MAGIC, DIAGNOSTIC_ERROR, 1]))
 
 
+def handle_encoder_diagnostic(connection):
+    """STOP first, then return fixed packet 43/44 counts for static diagnosis."""
+    status = 0
+    response = b"\x00\x00\x00\x00"
+    if uart_write_exact(STOP):
+        status |= ENCODER_ACK_STOP_WRITTEN
+        motion_latch.normal_stop()
+        queried = query_uart(
+            bytes(
+                [
+                    QUERY_LIST,
+                    2,
+                    SENSOR_LEFT_ENCODER_COUNTS,
+                    SENSOR_RIGHT_ENCODER_COUNTS,
+                ]
+            ),
+            4,
+        )
+        if len(queried) == 4:
+            response = queried
+            status |= ENCODER_ACK_QUERY_COMPLETE
+    else:
+        motion_latch.latch_stop()
+        print("encoder diagnostic STOP write failed; STOP latched")
+    send_all(
+        connection,
+        bytes([DIAGNOSTIC_MAGIC, DIAGNOSTIC_ENCODERS_RESPONSE, status])
+        + response,
+    )
+
+
 def handle_arm(connection, generation, connection_id=None):
     log_event("ARM_RX", connection_id=connection_id, generation=generation)
     if not ALLOW_NONZERO_DRIVE:
@@ -631,6 +668,8 @@ def forward_valid_frames(received, connection, connection_id=None):
                 handle_oi_mode_diagnostic(connection)
             elif diagnostic == DIAGNOSTIC_OI_MODE_LIVE:
                 handle_oi_mode_diagnostic(connection, stop_first=False)
+            elif diagnostic == DIAGNOSTIC_ENCODERS:
+                handle_encoder_diagnostic(connection)
             else:
                 send_all(
                     connection,
