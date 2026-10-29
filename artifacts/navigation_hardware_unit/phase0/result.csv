@@ -1,0 +1,10 @@
+case,distance_m,angle_error_rad,linear_x_m_s,angular_z_rad_s,left_mm_s,right_mm_s,stop,reason,expected_motion
+forward,1.0,0.0,0.08,0.0,20,20,False,command,forward
+left_90,1.0,1.5707963267948966,0.0,0.8,-20,20,False,command,left_rotation
+right_90,1.0,-1.5707963267948966,0.0,-0.8,20,-20,False,command,right_rotation
+left_45,1.4142135623730951,0.7853981633974482,0.0,0.8,-20,20,False,command,left_rotation
+right_45,1.4142135623730951,-0.7853981633974482,0.0,-0.8,20,-20,False,command,right_rotation
+reached,0.1,0.0,0.0,0.0,0,0,True,target_reached,stop
+pose_stale,,,0.0,0.0,0,0,True,pose_stale,stop
+target_stale,,,0.0,0.0,0,0,True,target_stale,stop
+old_target_after_stop,,,0.0,0.0,0,0,True,old_target_stopped_latch,stop
