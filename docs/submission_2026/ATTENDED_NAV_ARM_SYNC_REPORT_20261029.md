@@ -44,9 +44,21 @@ ARMせずfail-closedした。明示型rclpy subscriberへ変更後に正常系�
 ## 判定
 
 同期補助のコード・mock ROS E2E: **PASS**。
-実カメラNavigation候補との非走行E2E: **未確認**。
+実カメラNavigation候補との非走行E2E: **PASS**。
 実Pico ARM/Driveと物理停止: **未確認**。
 
-次は走行ロックFalse、物理bridgeなしで、実カメラ候補を入力して補助ノードの単一ARM
-publishを模擬subscriberで観測する。その後に改めて有人実機GO/NO-GOを判定する。
+## 実カメラ追試
+
+固定800×600 USB camera、v2 model、confidence 0.50、imgsz 960、正面60 cmの
+maskとArUco ID 0を使用した。PicoとRoombaは未接続、物理Roomba topicは不在だった。
+
+- 実カメラ由来の新鮮なNavigation候補を2件以上受信。
+- 模擬ARM subscriber 1件にgeneration `223456789`を1件だけpublish。
+- 同期補助はpublish後に終了し、追加ARM 0件。
+- `/roomba/cmd_vel_unstamped`は存在せず、dry-run topicだけが存在。
+- mask除去後は`detections=[]`、ArUco ID 0維持、Navigation非ゼロ出力5秒間0件。
+
+次はこの結果を有人実機GO/NO-GOへ反映する。ただし実機試行では改めて配備照合、
+STOP/Safe、通信、重複、物理配置、人間の当該試行承認が必要であり、本結果だけで
+ARM・Driveを許可しない。
 
