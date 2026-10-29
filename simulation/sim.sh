@@ -287,7 +287,23 @@ case "${1:-help}" in
     host="$2"
     port="${3:-9000}"
     "${compose[@]}" exec simulator bash -lc \
-      'source /opt/create3_ws/install/setup.bash; exec /usr/local/bin/roomba-bridge-tcp --ros-args -p host:="$1" -p port:="$2" -p drive_enabled:=false -p watchdog_test_mode:=false -p command_topic:=/roomba/cmd_vel_unstamped' \
+      'source /opt/create3_ws/install/setup.bash
+       exec 9>/tmp/roomba-physical-bridge.lock
+       if ! flock -n 9; then
+         echo "Refusing duplicate physical Roomba bridge: another session owns the lock" >&2
+         exit 73
+       fi
+       for cmdline_path in /proc/[0-9]*/cmdline; do
+         [ -r "$cmdline_path" ] || continue
+         running_command="$(tr "\000" " " < "$cmdline_path")"
+         case "$running_command" in
+           python3\ /usr/local/bin/roomba-bridge-tcp\ *|/usr/bin/python3\ /usr/local/bin/roomba-bridge-tcp\ *)
+             echo "Refusing orphan physical Roomba bridge: $running_command" >&2
+             exit 74
+             ;;
+         esac
+       done
+       exec /usr/local/bin/roomba-bridge-tcp --ros-args -p host:="$1" -p port:="$2" -p drive_enabled:=false -p watchdog_test_mode:=false -p command_topic:=/roomba/cmd_vel_unstamped' \
       -- "$host" "$port"
     ;;
   roomba-tcp-diagnostic)
@@ -298,14 +314,34 @@ case "${1:-help}" in
     host="$2"
     port="${3:-9000}"
     "${compose[@]}" exec simulator bash -lc \
-      'source /opt/create3_ws/install/setup.bash; exec /usr/local/bin/roomba-bridge-tcp --ros-args -p host:="$1" -p port:="$2" -p drive_enabled:=false -p diagnostic_on_connect:=true -p watchdog_test_mode:=false -p command_topic:=/roomba/cmd_vel_unstamped' \
+      'source /opt/create3_ws/install/setup.bash
+       exec 9>/tmp/roomba-physical-bridge.lock
+       if ! flock -n 9; then
+         echo "Refusing duplicate physical Roomba bridge: another session owns the lock" >&2
+         exit 73
+       fi
+       for cmdline_path in /proc/[0-9]*/cmdline; do
+         [ -r "$cmdline_path" ] || continue
+         running_command="$(tr "\000" " " < "$cmdline_path")"
+         case "$running_command" in
+           python3\ /usr/local/bin/roomba-bridge-tcp\ *|/usr/bin/python3\ /usr/local/bin/roomba-bridge-tcp\ *)
+             echo "Refusing orphan physical Roomba bridge: $running_command" >&2
+             exit 74
+             ;;
+         esac
+       done
+       exec /usr/local/bin/roomba-bridge-tcp --ros-args -p host:="$1" -p port:="$2" -p drive_enabled:=false -p diagnostic_on_connect:=true -p watchdog_test_mode:=false -p command_topic:=/roomba/cmd_vel_unstamped' \
       -- "$host" "$port"
     ;;
-  roomba-short-e-bridge|roomba-attended-floor-bridge)
-    if [ "$1" = "roomba-attended-floor-bridge" ]; then
+  roomba-short-e-bridge|roomba-attended-floor-bridge|roomba-trial-session)
+    unified_session=false
+    if [ "$1" = "roomba-attended-floor-bridge" ] || [ "$1" = "roomba-trial-session" ]; then
       bridge_confirmation="ATTENDED_FLOOR"
     else
       bridge_confirmation="WHEELS_LIFTED"
+    fi
+    if [ "$1" = "roomba-trial-session" ]; then
+      unified_session=true
     fi
     if [ "$#" -lt 3 ] || [ "$#" -gt 4 ] || [ "$3" != "$bridge_confirmation" ]; then
       echo "Usage: $0 $1 PICO_IP $bridge_confirmation [PORT]" >&2
@@ -315,6 +351,8 @@ case "${1:-help}" in
     port="${4:-9000}"
     short_e_owner="$$-$(date +%s)-${RANDOM}"
     short_e_pid_file=/tmp/roomba-short-e-bridge.pid
+    session_container_dir="/tmp/roomba-trial-session-${short_e_owner}"
+    session_artifact_dir="../artifacts/roomba_trial_sessions/${short_e_owner}"
 
     cleanup_short_e_bridge() {
       # docker compose exec can outlive the host shell when Ctrl+C is used
@@ -378,11 +416,23 @@ case "${1:-help}" in
       owner="$2"
       host="$3"
       port="$4"
-      exec 9>/tmp/roomba-short-e-bridge.lock
+      session_dir="$5"
+      unified_session="$6"
+      exec 9>/tmp/roomba-physical-bridge.lock
       if ! flock -n 9; then
-        echo "Refusing duplicate roomba-short-e-bridge: another instance is running" >&2
+        echo "Refusing duplicate physical Roomba bridge: another session owns the lock" >&2
         exit 73
       fi
+      for cmdline_path in /proc/[0-9]*/cmdline; do
+        [ -r "$cmdline_path" ] || continue
+        running_command="$(tr "\000" " " < "$cmdline_path")"
+        case "$running_command" in
+          python3\ /usr/local/bin/roomba-bridge-tcp\ *|/usr/bin/python3\ /usr/local/bin/roomba-bridge-tcp\ *)
+            echo "Refusing orphan physical Roomba bridge: $running_command" >&2
+            exit 74
+            ;;
+        esac
+      done
       bridge_pid=""
       stdin_monitor_pid=""
       stop_bridge() {
@@ -397,7 +447,15 @@ case "${1:-help}" in
         rm -f "$pid_file"
       }
       trap stop_bridge EXIT INT TERM
-      /usr/local/bin/roomba-bridge-tcp --ros-args -p host:="$host" -p port:="$port" -p drive_enabled:=true -p diagnostic_on_connect:=true -p watchdog_test_mode:=false -p max_speed_mm_s:=20 -p command_timeout:=0.5 -p max_drive_session_duration:=0.4 -p command_topic:=/roomba/cmd_vel_unstamped &
+      trace_arguments=()
+      if [ "$unified_session" = true ]; then
+        mkdir -p "$session_dir/ros"
+        export ROS_LOG_DIR="$session_dir/ros"
+        trace_arguments=(-p latency_trace_path:="$session_dir/latency.jsonl")
+        echo "Unified trial session: one bridge performs startup diagnosis, ARM wait, bounded trial, STOP, and shutdown"
+        echo "Session logs: $session_dir"
+      fi
+      /usr/local/bin/roomba-bridge-tcp --ros-args -p host:="$host" -p port:="$port" -p drive_enabled:=true -p diagnostic_on_connect:=true -p watchdog_test_mode:=false -p max_speed_mm_s:=20 -p command_timeout:=0.5 -p max_drive_session_duration:=0.4 -p command_topic:=/roomba/cmd_vel_unstamped "${trace_arguments[@]}" &
       bridge_pid=$!
       printf "%s %s\n" "$bridge_pid" "$owner" > "$pid_file"
       exec 8<&0
@@ -443,12 +501,17 @@ case "${1:-help}" in
         exit 130
       fi
       exit "$first_status"
-    ' -- "$short_e_pid_file" "$short_e_owner" "$host" "$port" &
+    ' -- "$short_e_pid_file" "$short_e_owner" "$host" "$port" "$session_container_dir" "$unified_session" &
     short_e_exec_pid=$!
     wait "$short_e_exec_pid"
     short_e_status=$?
     set -e
     cleanup_short_e_bridge
+    if [ "$unified_session" = true ]; then
+      mkdir -p "$session_artifact_dir"
+      "${compose[@]}" cp "simulator:${session_container_dir}/." "$session_artifact_dir" >/dev/null 2>&1 || true
+      echo "Unified trial session logs saved: $session_artifact_dir"
+    fi
     trap - EXIT INT TERM
     if [ "$short_e_signal_status" -ne 0 ]; then
       exit "$short_e_signal_status"
@@ -463,7 +526,23 @@ case "${1:-help}" in
     host="$2"
     port="${4:-9000}"
     "${compose[@]}" exec simulator bash -lc \
-      'source /opt/create3_ws/install/setup.bash; exec /usr/local/bin/roomba-bridge-tcp --ros-args -p host:="$1" -p port:="$2" -p drive_enabled:=true -p diagnostic_on_connect:=true -p watchdog_test_mode:=true -p watchdog_test_silence:=0.75 -p watchdog_test_confirmation:=WHEELS_LIFTED -p max_speed_mm_s:=20 -p command_topic:=/roomba/cmd_vel_unstamped' \
+      'source /opt/create3_ws/install/setup.bash
+       exec 9>/tmp/roomba-physical-bridge.lock
+       if ! flock -n 9; then
+         echo "Refusing duplicate physical Roomba bridge: another session owns the lock" >&2
+         exit 73
+       fi
+       for cmdline_path in /proc/[0-9]*/cmdline; do
+         [ -r "$cmdline_path" ] || continue
+         running_command="$(tr "\000" " " < "$cmdline_path")"
+         case "$running_command" in
+           python3\ /usr/local/bin/roomba-bridge-tcp\ *|/usr/bin/python3\ /usr/local/bin/roomba-bridge-tcp\ *)
+             echo "Refusing orphan physical Roomba bridge: $running_command" >&2
+             exit 74
+             ;;
+         esac
+       done
+       exec /usr/local/bin/roomba-bridge-tcp --ros-args -p host:="$1" -p port:="$2" -p drive_enabled:=true -p diagnostic_on_connect:=true -p watchdog_test_mode:=true -p watchdog_test_silence:=0.75 -p watchdog_test_confirmation:=WHEELS_LIFTED -p max_speed_mm_s:=20 -p command_topic:=/roomba/cmd_vel_unstamped' \
       -- "$host" "$port"
     ;;
   roomba-wheel-lift-test)
@@ -826,6 +905,6 @@ case "${1:-help}" in
     "${compose[@]}" cp simulator:/tmp/oscillation_summary.json ../artifacts/oscillation_diagnostics/summary.json
     ;;
   *)
-    echo "Usage: $0 {up|camera-up|vision-integration-up|real-camera-dry-run-up [PICO_IP [X Y YAW]]|real-camera-aruco-dry-run-up|real-camera-aruco-minimal-up|real-camera-aruco-minimal-status|real-camera-aruco-minimal-down|real-camera-ai-dry-run-up|real-camera-ai-dry-run-status|real-camera-ai-dry-run-down|nav-test-up|down|stop|shell|status|cmd-adapter [dry_run|gazebo|roomba] [INPUT_TOPIC]|pico-cmd-dry-run PICO_IP [PORT]|e2e-record {A|B|C|D|E} [SECONDS]|dry-run-pose X Y YAW|camera-status|litter-add X Y|litter-move X Y|litter-remove|logs|teleop|roomba-tcp PICO_IP [PORT]|roomba-tcp-diagnostic PICO_IP [PORT]|roomba-short-e-bridge PICO_IP WHEELS_LIFTED [PORT]|roomba-attended-floor-bridge PICO_IP ATTENDED_FLOOR [PORT]|roomba-tcp-watchdog PICO_IP WHEELS_LIFTED [PORT]|roomba-wheel-lift-test MODE [WHEELS_LIFTED]|aruco-pose|aruco-pose-start|aruco-pose-stop|localization-wheel-preview|localization-fusion-preview|localization-preview-test|localization-hardware-live|odometry-dryrun-e2e|wheel-monitor-dryrun|test-marker|record-status|presentation-layout|replay-create3-trajectory [RESULT_JSON [SPEED]]|ros-status|control-turn|control-approach|control-off|known-target-test|known-target-abort-test|multi-target-test|synthetic-coordinate-test|yolo-navigation-test|oscillation-diagnostics [SECONDS]}"
+    echo "Usage: $0 {up|camera-up|vision-integration-up|real-camera-dry-run-up [PICO_IP [X Y YAW]]|real-camera-aruco-dry-run-up|real-camera-aruco-minimal-up|real-camera-aruco-minimal-status|real-camera-aruco-minimal-down|real-camera-ai-dry-run-up|real-camera-ai-dry-run-status|real-camera-ai-dry-run-down|nav-test-up|down|stop|shell|status|cmd-adapter [dry_run|gazebo|roomba] [INPUT_TOPIC]|pico-cmd-dry-run PICO_IP [PORT]|e2e-record {A|B|C|D|E} [SECONDS]|dry-run-pose X Y YAW|camera-status|litter-add X Y|litter-move X Y|litter-remove|logs|teleop|roomba-tcp PICO_IP [PORT]|roomba-tcp-diagnostic PICO_IP [PORT]|roomba-short-e-bridge PICO_IP WHEELS_LIFTED [PORT]|roomba-attended-floor-bridge PICO_IP ATTENDED_FLOOR [PORT]|roomba-trial-session PICO_IP ATTENDED_FLOOR [PORT]|roomba-tcp-watchdog PICO_IP WHEELS_LIFTED [PORT]|roomba-wheel-lift-test MODE [WHEELS_LIFTED]|aruco-pose|aruco-pose-start|aruco-pose-stop|localization-wheel-preview|localization-fusion-preview|localization-preview-test|localization-hardware-live|odometry-dryrun-e2e|wheel-monitor-dryrun|test-marker|record-status|presentation-layout|replay-create3-trajectory [RESULT_JSON [SPEED]]|ros-status|control-turn|control-approach|control-off|known-target-test|known-target-abort-test|multi-target-test|synthetic-coordinate-test|yolo-navigation-test|oscillation-diagnostics [SECONDS]}"
     ;;
 esac

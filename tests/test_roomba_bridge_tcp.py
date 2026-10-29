@@ -142,6 +142,9 @@ class RoombaBridgeTcpIntegrationTests(unittest.TestCase):
         self.assertIn("-p drive_enabled:=false", case)
         self.assertIn("-p watchdog_test_mode:=false", case)
         self.assertIn("-p command_topic:=/roomba/cmd_vel_unstamped", case)
+        self.assertIn("/tmp/roomba-physical-bridge.lock", case)
+        self.assertIn("flock -n 9", case)
+        self.assertIn("Refusing orphan physical Roomba bridge", case)
         self.assertNotIn("drive_enabled:=true", case)
 
     def test_diagnostic_command_remains_stop_only(self):
@@ -152,6 +155,9 @@ class RoombaBridgeTcpIntegrationTests(unittest.TestCase):
         self.assertIn("-p diagnostic_on_connect:=true", case)
         self.assertIn("-p watchdog_test_mode:=false", case)
         self.assertIn("-p command_topic:=/roomba/cmd_vel_unstamped", case)
+        self.assertIn("/tmp/roomba-physical-bridge.lock", case)
+        self.assertIn("flock -n 9", case)
+        self.assertIn("Refusing orphan physical Roomba bridge", case)
         self.assertNotIn("drive_enabled:=true", case)
 
     def test_watchdog_launcher_requires_both_locks_and_bounds_speed(self):
@@ -165,6 +171,8 @@ class RoombaBridgeTcpIntegrationTests(unittest.TestCase):
         self.assertIn("-p watchdog_test_silence:=0.75", case)
         self.assertIn("-p watchdog_test_confirmation:=WHEELS_LIFTED", case)
         self.assertIn("-p max_speed_mm_s:=20", case)
+        self.assertIn("/tmp/roomba-physical-bridge.lock", case)
+        self.assertIn("Refusing orphan physical Roomba bridge", case)
 
     def test_short_e_launcher_requires_wheel_lift_and_hard_bounds(self):
         sim_script = (ROOT / "simulation" / "sim.sh").read_text()
@@ -184,9 +192,10 @@ class RoombaBridgeTcpIntegrationTests(unittest.TestCase):
         sim_script = (ROOT / "simulation" / "sim.sh").read_text()
         start = sim_script.index("  roomba-short-e-bridge|")
         case = sim_script[start : sim_script.index("  roomba-tcp-watchdog)", start)]
-        self.assertIn('exec 9>/tmp/roomba-short-e-bridge.lock', case)
+        self.assertIn('exec 9>/tmp/roomba-physical-bridge.lock', case)
         self.assertIn("flock -n 9", case)
-        self.assertIn("Refusing duplicate roomba-short-e-bridge", case)
+        self.assertIn("Refusing duplicate physical Roomba bridge", case)
+        self.assertIn("Refusing orphan physical Roomba bridge", case)
         self.assertIn("cleanup_short_e_bridge", case)
         self.assertIn("interrupt_short_e_bridge", case)
         self.assertIn("keep_short_e_stdin_open", case)
@@ -211,6 +220,20 @@ class RoombaBridgeTcpIntegrationTests(unittest.TestCase):
         self.assertIn('"$3" != "$bridge_confirmation"', case)
         self.assertIn("-p max_speed_mm_s:=20", case)
         self.assertIn("-p command_timeout:=0.5", case)
+        self.assertIn("-p max_drive_session_duration:=0.4", case)
+
+    def test_unified_trial_session_reuses_bridge_and_saves_logs(self):
+        sim_script = (ROOT / "simulation" / "sim.sh").read_text()
+        start = sim_script.index("  roomba-short-e-bridge|")
+        case = sim_script[start : sim_script.index("  roomba-tcp-watchdog)", start)]
+        self.assertIn("roomba-trial-session", case)
+        self.assertIn('unified_session=true', case)
+        self.assertIn('ROS_LOG_DIR="$session_dir/ros"', case)
+        self.assertIn('latency_trace_path:="$session_dir/latency.jsonl"', case)
+        self.assertIn("Unified trial session logs saved", case)
+        self.assertEqual(case.count("/usr/local/bin/roomba-bridge-tcp --ros-args"), 1)
+        self.assertIn("-p diagnostic_on_connect:=true", case)
+        self.assertIn("-p max_speed_mm_s:=20", case)
         self.assertIn("-p max_drive_session_duration:=0.4", case)
 
     def test_bounded_drive_gate_defaults_off_and_revokes_arm_on_deadline(self):
