@@ -902,6 +902,69 @@ class PicoRelayProtocolTests(unittest.TestCase):
         self.assertIn("session deadline detected", output.getvalue())
         self.assertIn("UART STOP complete", output.getvalue())
 
+    def test_continuous_mode_accepts_multiple_sequences_until_fixed_deadline(self):
+        relay, uart = load_relay()
+        relay.ALLOW_NONZERO_DRIVE = True
+        relay.CONTINUOUS_DRIVE_TEST_ENABLED = True
+        relay.CONTINUOUS_DRIVE_SESSION_TIMEOUT_MS = 3000
+        connection = FakeConnection()
+        relay.forward_valid_frames(bytearray(self.arm_frame(relay, 181)), connection)
+
+        schedule_ms = (0, 400, 800, 1200, 1600, 2000, 2400, 2800)
+        for sequence, offset_ms in enumerate(schedule_ms, start=1):
+            if sequence == 1:
+                relay.time.now = 1000
+            else:
+                relay.time.now = 1000 + offset_ms
+            _remaining, activity = relay.forward_valid_frames(
+                bytearray(self.drive_frame(relay, 181, sequence=sequence)),
+                connection,
+            )
+            self.assertEqual(activity, 1)
+
+        self.assertEqual(relay.motion_latch.generation, 181)
+        self.assertEqual(relay.motion_latch.last_sequence, 8)
+        self.assertEqual(len(uart.writes), 8)
+        started_at = relay.motion_latch.drive_started_at_ms
+        relay.time.now = started_at + 3000
+        _remaining, activity = relay.forward_valid_frames(
+            bytearray(self.drive_frame(relay, 181, sequence=9)), connection
+        )
+        self.assertEqual(activity, 0)
+        self.assertEqual(len(uart.writes), 8)
+
+    def test_continuous_mode_is_opt_in_bounded_and_main_matches(self):
+        relay, _uart = load_relay()
+        self.assertFalse(relay.CONTINUOUS_DRIVE_TEST_ENABLED)
+        self.assertEqual(relay.configured_drive_session_timeout_ms(), 400)
+        relay.CONTINUOUS_DRIVE_TEST_ENABLED = True
+        for value in (999, 5001):
+            relay.CONTINUOUS_DRIVE_SESSION_TIMEOUT_MS = value
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                relay.configured_drive_session_timeout_ms()
+
+        main_source = (SOURCE.parent / "main.py").read_text()
+        self.assertIn("CONTINUOUS_DRIVE_TEST_ENABLED = False", main_source)
+        self.assertIn("CONTINUOUS_DRIVE_SESSION_TIMEOUT_MS = 1000", main_source)
+        self.assertIn("configured_drive_session_timeout_ms()", main_source)
+
+    def test_continuous_mode_keeps_independent_500ms_watchdog(self):
+        relay, uart = load_relay()
+        relay.ALLOW_NONZERO_DRIVE = True
+        relay.CONTINUOUS_DRIVE_TEST_ENABLED = True
+        relay.CONTINUOUS_DRIVE_SESSION_TIMEOUT_MS = 3000
+        relay.motion_latch.state = relay.MotionLatch.ARMED
+        relay.motion_latch.generation = 191
+        relay.motion_latch.connection_id = 4
+        relay.motion_latch.drive_started_at_ms = 1000
+        relay.time.now = 1500
+
+        stopped = relay.enforce_command_watchdog(1000, False)
+
+        self.assertTrue(stopped)
+        self.assertEqual(uart.writes, [relay.STOP])
+        self.assertEqual(relay.motion_latch.state, relay.MotionLatch.LATCHED_STOP)
+
     def test_expired_pico_session_rejects_next_drive_before_uart(self):
         relay, uart = load_relay()
         relay.ALLOW_NONZERO_DRIVE = True

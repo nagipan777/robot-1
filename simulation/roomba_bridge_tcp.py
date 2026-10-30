@@ -60,9 +60,11 @@ class RoombaBridgeTcp(Node):
         self.declare_parameter("command_timeout", 0.5)
         self.declare_parameter("safe_check_interval", 0.25)
         self.declare_parameter("arm_hold_timeout", 1.0)
-        # Disabled by default.  The short-E wheel-lift launcher sets this to a
-        # conservative sub-second value.  Values above one second are refused.
+        # Disabled by default.  The proven launcher remains capped at one
+        # second; only the separately confirmed continuous test may use 1..5 s.
         self.declare_parameter("max_drive_session_duration", 0.0)
+        self.declare_parameter("continuous_drive_test_mode", False)
+        self.declare_parameter("continuous_drive_test_confirmation", "")
         # Compatibility guard only. The normal bridge never disables its
         # host-side timeout; Pico-only watchdog tests require a separate path.
         self.declare_parameter("watchdog_test_mode", False)
@@ -83,6 +85,12 @@ class RoombaBridgeTcp(Node):
         self.arm_hold_timeout = self.get_parameter("arm_hold_timeout").value
         self.max_drive_session_duration = self.get_parameter(
             "max_drive_session_duration"
+        ).value
+        self.continuous_drive_test_mode = self.get_parameter(
+            "continuous_drive_test_mode"
+        ).value
+        self.continuous_drive_test_confirmation = self.get_parameter(
+            "continuous_drive_test_confirmation"
         ).value
         self.watchdog_test_mode = self.get_parameter("watchdog_test_mode").value
         self.watchdog_test_silence = self.get_parameter(
@@ -112,6 +120,19 @@ class RoombaBridgeTcp(Node):
             )
         if not 0.5 < self.watchdog_test_silence <= 1.0:
             raise ValueError("watchdog_test_silence must be > 0.5 and <= 1.0")
+        if self.continuous_drive_test_mode and not (
+            self.drive_enabled
+            and not self.watchdog_test_mode
+            and self.continuous_drive_test_confirmation
+            == "CONTINUOUS_ATTENDED_FLOOR"
+            and self.max_speed_mm_s <= 20
+            and 1.0 <= self.max_drive_session_duration <= 5.0
+        ):
+            raise ValueError(
+                "continuous_drive_test_mode=true requires drive_enabled=true, "
+                "watchdog_test_mode=false, confirmation=CONTINUOUS_ATTENDED_FLOOR, "
+                "max_speed_mm_s<=20, and session duration 1.0..5.0 seconds"
+            )
 
         self.latency_trace = LatencyTrace(
             self.latency_trace_path, component="roomba_bridge_tcp"
@@ -123,7 +144,9 @@ class RoombaBridgeTcp(Node):
             self.drive_enabled, self.command_timeout, time.monotonic
         )
         self.drive_session_limiter = DriveSessionLimiter(
-            self.max_drive_session_duration, time.monotonic
+            self.max_drive_session_duration,
+            time.monotonic,
+            max_duration_s=5.0 if self.continuous_drive_test_mode else 1.0,
         )
         self.watchdog_test_state = WatchdogTestCommandState(
             self.watchdog_test_silence, time.monotonic

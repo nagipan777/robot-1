@@ -232,16 +232,27 @@ class DriveSessionLimiter:
 
     MAX_DURATION_S = 1.0
 
-    def __init__(self, duration_s=0.0, clock=None):
+    def __init__(self, duration_s=0.0, clock=None, *, max_duration_s=None):
+        if max_duration_s is None:
+            max_duration_s = self.MAX_DURATION_S
         if (
             not isinstance(duration_s, (int, float))
             or isinstance(duration_s, bool)
             or not math.isfinite(duration_s)
             or duration_s < 0.0
-            or duration_s > self.MAX_DURATION_S
+            or not isinstance(max_duration_s, (int, float))
+            or isinstance(max_duration_s, bool)
+            or not math.isfinite(max_duration_s)
+            or max_duration_s <= 0.0
+            or duration_s > max_duration_s
         ):
-            raise ValueError("drive session duration must be 0 or <= 1.0 seconds")
+            raise ValueError(
+                "drive session duration must be 0 or <= {:.1f} seconds".format(
+                    max_duration_s
+                )
+            )
         self.duration_s = float(duration_s)
+        self.max_duration_s = float(max_duration_s)
         self.clock = clock or time.monotonic
         self.started_at = None
         self.latched = False

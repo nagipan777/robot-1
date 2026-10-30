@@ -18,6 +18,11 @@ COMMAND_TIMEOUT_MS = 500
 # Independent, non-refreshing cap from the first accepted non-zero Drive.
 # This is separate from the 500 ms inter-command watchdog.
 DRIVE_SESSION_TIMEOUT_MS = 400
+# Separate, opt-in attended continuous-drive experiment.  The proven 400 ms
+# profile above remains the default and is not modified by this mode.
+CONTINUOUS_DRIVE_TEST_ENABLED = False
+CONTINUOUS_DRIVE_SESSION_TIMEOUT_MS = 1000
+CONTINUOUS_DRIVE_SESSION_MAX_MS = 5000
 WIFI_CONNECT_TIMEOUT_MS = 30000
 WIFI_RETRY_MS = 3000
 ACCEPT_TIMEOUT_S = 1
@@ -99,6 +104,18 @@ led = machine.Pin("LED", machine.Pin.OUT)
 led.off()
 wlan = network.WLAN(network.STA_IF)
 connection_counter = 0
+
+
+def configured_drive_session_timeout_ms():
+    if not CONTINUOUS_DRIVE_TEST_ENABLED:
+        return DRIVE_SESSION_TIMEOUT_MS
+    if not (
+        1000
+        <= CONTINUOUS_DRIVE_SESSION_TIMEOUT_MS
+        <= CONTINUOUS_DRIVE_SESSION_MAX_MS
+    ):
+        raise ValueError("continuous drive session timeout must be 1000..5000 ms")
+    return CONTINUOUS_DRIVE_SESSION_TIMEOUT_MS
 
 
 def log_event(event, **fields):
@@ -203,7 +220,7 @@ class MotionLatch:
             self.state == self.ARMED
             and self.drive_started_at_ms is not None
             and time.ticks_diff(now_ms, self.drive_started_at_ms)
-            >= DRIVE_SESSION_TIMEOUT_MS
+            >= configured_drive_session_timeout_ms()
         )
 
     def arm_expired(self, now_ms):

@@ -244,6 +244,20 @@ class RoombaBridgeTcpIntegrationTests(unittest.TestCase):
         self.assertIn("bounded drive deadline detected: STOP send starts next", source)
         self.assertIn("bounded Drive ACK: status=0x03", source)
 
+    def test_continuous_mode_is_separate_explicit_and_bounded(self):
+        source = (ROOT / "simulation" / "roomba_bridge_tcp.py").read_text()
+        self.assertIn('declare_parameter("continuous_drive_test_mode", False)', source)
+        self.assertIn(
+            'declare_parameter("continuous_drive_test_confirmation", "")', source
+        )
+        self.assertIn('== "CONTINUOUS_ATTENDED_FLOOR"', source)
+        self.assertIn("self.max_speed_mm_s <= 20", source)
+        self.assertIn("1.0 <= self.max_drive_session_duration <= 5.0", source)
+        self.assertIn(
+            "max_duration_s=5.0 if self.continuous_drive_test_mode else 1.0",
+            source,
+        )
+
     def test_deadline_is_checked_after_safe_query_and_at_tcp_dispatch(self):
         bridge = (ROOT / "simulation" / "roomba_bridge_tcp.py").read_text()
         transport = (ROOT / "simulation" / "roomba_tcp_transport.py").read_text()
