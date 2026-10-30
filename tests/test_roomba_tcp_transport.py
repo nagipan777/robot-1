@@ -6,6 +6,7 @@ import unittest
 
 from simulation.roomba_tcp_transport import (
     CommandState,
+    DriveAckState,
     DriveSessionLimiter,
     DriveDeadlineExpired,
     DIAGNOSTIC_MAGIC,
@@ -83,6 +84,133 @@ def ready_handler(connection, received):
 
 
 class RoombaTcpTransportTests(unittest.TestCase):
+    def test_command_state_keeps_only_latest_fresh_navigation_candidate(self):
+        now = [10.0]
+        state = CommandState(True, 0.5, lambda: now[0])
+        state.update(0.01, 0.1)
+        first_revision = state.revision
+        now[0] = 10.2
+        state.update(0.02, -0.1)
+        command, received_at, revision = state.current_snapshot()
+        self.assertEqual(command, (0.02, -0.1))
+        self.assertEqual(received_at, 10.2)
+        self.assertGreater(revision, first_revision)
+        now[0] = 10.701
+        self.assertIsNone(state.current_snapshot())
+
+    def test_drive_ack_state_rejects_overlapping_unconfirmed_drive(self):
+        now = [1.0]
+        state = DriveAckState(lambda: now[0])
+        state.begin(7, 1)
+        with self.assertRaisesRegex(RoombaDiagnosticError, "still pending"):
+            state.begin(7, 2)
+        now[0] = 1.05
+        state.confirm(7, 1)
+        self.assertEqual(state.state, "confirmed")
+        self.assertAlmostEqual(state.elapsed_s, 0.05)
+
+    def test_drive_ack_delay_matrix_preserves_arm_only_before_fixed_deadline(self):
+        generation = 71
+
+        class DelayedAckSocket:
+            def __init__(self, delay_s, response):
+                self.delay_s = delay_s
+                self.response = bytearray(response)
+                self.ready_at = None
+                self.timeout = 2.0
+                self.sent = []
+                self.closed = False
+
+            def sendall(self, packet):
+                self.sent.append(packet)
+                if self.ready_at is None:
+                    self.ready_at = time.monotonic() + self.delay_s
+
+            def gettimeout(self):
+                return self.timeout
+
+            def settimeout(self, timeout):
+                self.timeout = timeout
+
+            def recv(self, size):
+                remaining = self.ready_at - time.monotonic()
+                if remaining > 0.0:
+                    time.sleep(min(remaining, self.timeout))
+                    if remaining > self.timeout:
+                        raise socket.timeout()
+                chunk = bytes(self.response[:size])
+                del self.response[:size]
+                return chunk
+
+            def close(self):
+                self.closed = True
+
+        for delay_s in (0.0, 0.05, 0.10, 0.20, 0.30):
+            with self.subTest(delay_s=delay_s):
+                response = with_crc(
+                    bytes(
+                        [
+                            DIAGNOSTIC_MAGIC,
+                            SEQUENCED_DRIVE_RESPONSE,
+                            DRIVE_ACK_COMPLETE,
+                        ]
+                    )
+                    + struct.pack(">II", generation, 1)
+                )
+                events = []
+                connection = DelayedAckSocket(delay_s, response)
+                transport = RoombaTcpTransport(
+                    "unused",
+                    9000,
+                    trace=lambda stage, **fields: events.append((stage, fields)),
+                )
+                transport.socket = connection
+                transport.armed_generation = generation
+                sequence = transport.send_twist(
+                    0.02,
+                    0.0,
+                    track_width_m=0.235,
+                    max_speed_mm_s=20,
+                    deadline_monotonic=time.monotonic() + 0.4,
+                )
+                self.assertEqual(sequence, 1)
+                self.assertEqual(transport.armed_generation, generation)
+                self.assertEqual(transport.drive_sequence, 1)
+                self.assertEqual(transport.drive_ack_state.state, "confirmed")
+                self.assertEqual(len(connection.sent), 1)
+                validated = next(
+                    fields for stage, fields in events
+                    if stage == "tcp_drive_ack_validated"
+                )
+                self.assertGreaterEqual(validated["ack_elapsed_s"], delay_s - 0.01)
+
+        connection = DelayedAckSocket(0.60, b"")
+        events = []
+        transport = RoombaTcpTransport(
+            "unused",
+            9000,
+            trace=lambda stage, **fields: events.append((stage, fields)),
+        )
+        transport.socket = connection
+        transport.armed_generation = generation
+        with self.assertRaises(DriveDeadlineExpired):
+            transport.send_twist(
+                0.02,
+                0.0,
+                track_width_m=0.235,
+                max_speed_mm_s=20,
+                deadline_monotonic=time.monotonic() + 0.4,
+            )
+        self.assertIsNone(transport.armed_generation)
+        self.assertEqual(transport.drive_sequence, 0)
+        self.assertEqual(transport.drive_ack_state.state, "failed")
+        self.assertEqual(len(connection.sent), 2)
+        failure = next(
+            fields for stage, fields in events if stage == "tcp_drive_ack_failed"
+        )
+        self.assertEqual(failure["sequence"], 1)
+        self.assertEqual(failure["received_bytes"], 0)
+
     def test_drive_trace_separates_send_receive_and_validation(self):
         generation = 9
         sequence = 1
@@ -277,7 +405,12 @@ class RoombaTcpTransportTests(unittest.TestCase):
                 self.closed = True
 
         connection = PartialSocket()
-        transport = RoombaTcpTransport("unused", 9000)
+        events = []
+        transport = RoombaTcpTransport(
+            "unused",
+            9000,
+            trace=lambda stage, **fields: events.append((stage, fields)),
+        )
         transport.socket = connection
         transport.armed_generation = 100
         with self.assertRaisesRegex(DriveDeadlineExpired, r"received 1/13 bytes"):
@@ -291,6 +424,12 @@ class RoombaTcpTransportTests(unittest.TestCase):
         self.assertEqual(connection.sent[-1], STOP_PACKET)
         self.assertTrue(connection.closed)
         self.assertFalse(transport.connected)
+        failure = next(
+            fields for stage, fields in events if stage == "tcp_drive_ack_failed"
+        )
+        self.assertEqual(failure["sequence"], 1)
+        self.assertEqual(failure["received_bytes"], 1)
+        self.assertEqual(failure["expected_bytes"], 13)
 
     def test_bounded_drive_session_expires_and_requires_new_arm(self):
         now = [10.0]

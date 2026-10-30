@@ -1,6 +1,7 @@
 """ROS-independent TCP transport for a Pico W Roomba OI relay."""
 
 import math
+import re
 import socket
 import struct
 import time
@@ -110,6 +111,15 @@ def with_crc(payload):
     return payload + struct.pack(">H", crc16_ccitt(payload))
 
 
+def _received_count_from_error(error):
+    """Extract fixed-response progress from existing diagnostic messages."""
+    message = str(error)
+    match = re.search(r"received (\d+)/(\d+) bytes", message)
+    if match is None:
+        match = re.search(r"\((\d+)/(\d+) bytes", message)
+    return int(match.group(1)) if match is not None else 0
+
+
 class CommandState:
     """Gate commands by explicit enablement, freshness, and reconnect resets."""
 
@@ -123,6 +133,7 @@ class CommandState:
         self.drive_enabled = bool(drive_enabled)
         self.command_timeout = command_timeout
         self.clock = clock
+        self.revision = 0
         self.clear()
 
     def clear(self):
@@ -135,6 +146,7 @@ class CommandState:
             return
         self.command = (linear_x, angular_z)
         self.received_at = self.clock()
+        self.revision += 1
 
     def current(self):
         if not self.drive_enabled or self.received_at is None:
@@ -144,6 +156,70 @@ class CommandState:
             self.clear()
             return None
         return self.command
+
+    def current_snapshot(self):
+        """Return the latest fresh command with its receipt time and revision."""
+        command = self.current()
+        if command is None:
+            return None
+        return command, self.received_at, self.revision
+
+
+class DriveAckState:
+    """Track one in-flight Drive separately from ARM and command freshness."""
+
+    def __init__(self, clock=None):
+        self.clock = clock or time.monotonic
+        self.reset("initial")
+
+    def reset(self, reason):
+        self.state = "idle"
+        self.generation = None
+        self.sequence = None
+        self.started_at = None
+        self.completed_at = None
+        self.reason = reason
+
+    def begin(self, generation, sequence):
+        if self.state == "pending":
+            raise RoombaDiagnosticError(
+                "Drive ACK still pending: generation={}, sequence={}".format(
+                    self.generation, self.sequence
+                )
+            )
+        self.state = "pending"
+        self.generation = generation
+        self.sequence = sequence
+        self.started_at = self.clock()
+        self.completed_at = None
+        self.reason = "waiting"
+
+    def confirm(self, generation, sequence):
+        if (
+            self.state != "pending"
+            or generation != self.generation
+            or sequence != self.sequence
+        ):
+            raise RoombaDiagnosticError(
+                "Drive ACK state mismatch: pending={}/{}, received={}/{}".format(
+                    self.generation, self.sequence, generation, sequence
+                )
+            )
+        self.state = "confirmed"
+        self.completed_at = self.clock()
+        self.reason = "validated"
+
+    def fail(self, reason):
+        self.state = "failed"
+        self.completed_at = self.clock()
+        self.reason = str(reason)
+
+    @property
+    def elapsed_s(self):
+        if self.started_at is None:
+            return None
+        end = self.completed_at if self.completed_at is not None else self.clock()
+        return end - self.started_at
 
 
 class DriveSessionLimiter:
@@ -288,10 +364,23 @@ class RoombaTcpTransport:
         self.socket = None
         self.armed_generation = None
         self.drive_sequence = 0
+        self.drive_ack_state = DriveAckState()
 
     def _trace(self, stage, **fields):
         if self.trace is not None:
             self.trace(stage, **fields)
+
+    def _fail_drive_ack(self, reason, *, received_bytes=0):
+        self.drive_ack_state.fail(reason)
+        self._trace(
+            "tcp_drive_ack_failed",
+            generation=self.drive_ack_state.generation,
+            sequence=self.drive_ack_state.sequence,
+            received_bytes=received_bytes,
+            expected_bytes=DRIVE_RESPONSE_SIZE,
+            elapsed_s=self.drive_ack_state.elapsed_s,
+            reason=self.drive_ack_state.reason,
+        )
 
     @property
     def connected(self):
@@ -301,6 +390,7 @@ class RoombaTcpTransport:
         self.close(send_stop=False)
         self.armed_generation = None
         self.drive_sequence = 0
+        self.drive_ack_state.reset("connect")
         connection = None
         started = time.monotonic()
         self._trace("tcp_connect_start", host=self.host, port=self.port)
@@ -340,6 +430,7 @@ class RoombaTcpTransport:
         self.send_packet(STOP_PACKET)
         self.armed_generation = None
         self.drive_sequence = 0
+        self.drive_ack_state.reset("stop")
 
     def arm(self, generation):
         if not isinstance(generation, int) or isinstance(generation, bool):
@@ -351,6 +442,7 @@ class RoombaTcpTransport:
         # publish the new generation to Drive.
         self.armed_generation = None
         self.drive_sequence = 0
+        self.drive_ack_state.reset("arm_attempt")
         packet = bytes([DIAGNOSTIC_MAGIC, CONTROL_ARM]) + struct.pack(">I", generation)
         started = time.monotonic()
         self._trace("tcp_arm_send_start", generation=generation, bytes=len(packet))
@@ -532,7 +624,14 @@ class RoombaTcpTransport:
                 "{:.6f}s".format(dispatch_checked_at - deadline_monotonic)
             )
         send_started = time.monotonic()
-        self.send_packet(with_crc(payload))
+        self.drive_ack_state.begin(self.armed_generation, sequence)
+        try:
+            self.send_packet(with_crc(payload))
+        except (OSError, ConnectionError) as error:
+            self._fail_drive_ack(
+                "send_error: {}".format(error), received_bytes=0
+            )
+            raise
         send_returned = time.monotonic()
         self._trace(
             "tcp_drive_sent",
@@ -548,12 +647,19 @@ class RoombaTcpTransport:
             sequence=sequence,
             deadline_monotonic=deadline_monotonic,
         )
-        response = self._receive_exact(
-            self.socket,
-            DRIVE_RESPONSE_SIZE,
-            operation="Drive ACK",
-            deadline_monotonic=deadline_monotonic,
-        )
+        try:
+            response = self._receive_exact(
+                self.socket,
+                DRIVE_RESPONSE_SIZE,
+                operation="Drive ACK",
+                deadline_monotonic=deadline_monotonic,
+            )
+        except (OSError, ConnectionError, RoombaDiagnosticError) as error:
+            self._fail_drive_ack(
+                error,
+                received_bytes=_received_count_from_error(error),
+            )
+            raise
         self._trace(
             "tcp_drive_ack_received",
             generation=self.armed_generation,
@@ -562,13 +668,20 @@ class RoombaTcpTransport:
             ack_wait_elapsed_s=time.monotonic() - send_returned,
         )
         if len(response) != DRIVE_RESPONSE_SIZE:
+            self._fail_drive_ack("invalid_size", received_bytes=len(response))
             raise RoombaDiagnosticError("invalid Drive ACK size")
         body, supplied_crc = response[:-2], struct.unpack(">H", response[-2:])[0]
         if crc16_ccitt(body) != supplied_crc:
+            self._fail_drive_ack(
+                "checksum_mismatch", received_bytes=len(response)
+            )
             raise RoombaDiagnosticError(
                 "Drive ACK checksum mismatch: raw={}".format(response.hex())
             )
         if body[:2] != bytes([DIAGNOSTIC_MAGIC, SEQUENCED_DRIVE_RESPONSE]):
+            self._fail_drive_ack(
+                "unexpected_response", received_bytes=len(response)
+            )
             raise RoombaDiagnosticError(
                 "unexpected Drive ACK: raw={}".format(response.hex())
             )
@@ -579,17 +692,23 @@ class RoombaTcpTransport:
             or ack_generation != self.armed_generation
             or ack_sequence != sequence
         ):
+            self._fail_drive_ack(
+                "status_generation_or_sequence_mismatch",
+                received_bytes=len(response),
+            )
             raise RoombaDiagnosticError(
                 "Drive rejected: status=0x{:02x}, generation={}, sequence={}".format(
                     status, ack_generation, ack_sequence
                 )
             )
         self.drive_sequence = sequence
+        self.drive_ack_state.confirm(ack_generation, ack_sequence)
         self._trace(
             "tcp_drive_ack_validated",
             generation=self.armed_generation,
             sequence=sequence,
             status=status,
+            ack_elapsed_s=self.drive_ack_state.elapsed_s,
         )
         return sequence
 
@@ -603,6 +722,7 @@ class RoombaTcpTransport:
         self.socket = None
         self.armed_generation = None
         self.drive_sequence = 0
+        self.drive_ack_state.reset("close")
         if connection is None:
             return
         if send_stop:
@@ -661,6 +781,7 @@ class RoombaTcpTransport:
                         stop_error = error
                     self.armed_generation = None
                     self.drive_sequence = 0
+                    self.drive_ack_state.fail("bounded_deadline")
                     stop_returned = time.monotonic()
                     self._trace(
                         "tcp_deadline_stop_return",

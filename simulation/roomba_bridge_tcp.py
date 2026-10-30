@@ -347,8 +347,8 @@ class RoombaBridgeTcp(Node):
             self.expire_bounded_drive()
             return
 
-        command = self.command_state.current()
-        if command is None:
+        command_snapshot = self.command_state.current_snapshot()
+        if command_snapshot is None:
             if (
                 self.transport.armed_generation is not None
                 and time.monotonic() < self.arm_deadline
@@ -357,6 +357,7 @@ class RoombaBridgeTcp(Node):
             if not self.idle_stop_sent:
                 self.send_stop()
             return
+        command, command_received_at, command_revision = command_snapshot
 
         if command != (0.0, 0.0) and time.monotonic() >= self.next_safe_check:
             try:
@@ -379,10 +380,11 @@ class RoombaBridgeTcp(Node):
             except (OSError, ConnectionError, RoombaDiagnosticError) as error:
                 self.handle_safety_failure(error)
                 return
-            command = self.command_state.current()
-            if command is None:
+            command_snapshot = self.command_state.current_snapshot()
+            if command_snapshot is None:
                 self.send_stop()
                 return
+            command, command_received_at, command_revision = command_snapshot
         if (
             command != (0.0, 0.0)
             and not self.drive_session_limiter.permits_dispatch()
@@ -401,6 +403,10 @@ class RoombaBridgeTcp(Node):
                 linear_x=command[0],
                 angular_z=command[1],
                 generation=self.transport.armed_generation,
+                command_received_at=command_received_at,
+                command_age_s=time.monotonic() - command_received_at,
+                command_revision=command_revision,
+                ack_state=self.transport.drive_ack_state.state,
             )
             sequence = self.transport.send_twist(
                 command[0],
