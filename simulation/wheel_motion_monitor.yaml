@@ -1,0 +1,18 @@
+wheel_motion_monitor:
+  ros__parameters:
+    # Observation-only and opt-in. Warnings never publish STOP or Drive.
+    monitor_enabled: false
+    encoder_topic: /roomba/encoder_counts
+    command_topic: /roomba/cmd_vel_unstamped
+    arm_topic: /roomba/arm_generation
+    csv_path: ""
+    wheel_base_m: 0.235
+    max_speed_mm_s: 20
+    encoder_counts_per_rev: 508.8
+    wheel_diameter_m: 0.072
+    command_no_motion_grace_s: 0.25
+    stop_motion_grace_s: 0.20
+    measurement_stale_s: 0.50
+    encoder_motion_threshold_ticks: 1
+    command_motion_threshold_mm_s: 1
+    max_tick_delta: 2000

@@ -7,23 +7,24 @@ aruco_pose_publisher:
     status_topic: /robot/pose_status
     map_frame: map
     marker_id: 0
-    # Unknown until the printed marker is measured. 0 disables any 3D claim.
-    marker_size_m: 0.0
-    # Keep false until marker size/height, camera geometry, mount offset and
-    # independent validation points are measured and recorded.
-    pose_calibration_ready: false
+    # Measured black-square outer edge on 2026-10-28.
+    marker_size_m: 0.080
+    # Geometry passed two independent measured-point checks on 2026-10-28.
+    # Authoritative output remains separately locked below.
+    pose_calibration_ready: true
     pose_output_enabled: false
-    calibration_image_width: 1280
-    calibration_image_height: 960
-    image_to_map_homography: [2.271875105e-05, -0.002563034829, 2.924257728, -0.00167332933, 2.362981057e-05, 1.038104632, 3.022370992e-05, 2.631257443e-05, 1.0]
-    # Measure these before enabling pose output. Units are metres/radians.
-    camera_ground_x: 1.7
-    camera_ground_y: 0.1
-    camera_height_m:  0.82
-    marker_height_m: 0.08
-    marker_to_robot_forward_m: 0.0
-    marker_to_robot_left_m: 0.0
-    marker_yaw_offset_rad: 1.508362
+    calibration_image_width: 800
+    calibration_image_height: 600
+    image_to_map_homography: [-0.001470399292974724, 0.0037626294410314717, 5.797794949988258, -0.008284737151183564, -0.0003804983196974422, 3.566416130572197, -0.001447932227919006, 0.017275494400635284, 1.0]
+    # Camera-ground projection defines map (0, 0); units are metres/radians.
+    camera_ground_x: 0.0
+    camera_ground_y: 0.0
+    camera_height_m: 0.53
+    marker_height_m: 0.12
+    marker_to_robot_forward_m: -0.010
+    # Marker is measured 0.002 m left of robot centre, so marker-to-robot is right.
+    marker_to_robot_left_m: -0.002
+    marker_yaw_offset_rad: 1.7016900232085759
     min_marker_pixel_area: 100.0
     max_pose_age: 0.5
     min_consecutive_detections: 3

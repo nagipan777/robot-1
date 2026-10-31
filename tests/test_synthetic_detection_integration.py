@@ -13,7 +13,7 @@ class SyntheticDetectionIntegrationTests(unittest.TestCase):
         branch = script.split("vision-integration-up)", 1)[1].split(";;", 1)[0]
         self.assertIn("SIM_WORLD=room_camera", branch)
         self.assertIn("ROBOT_X=0.0 ROBOT_Y=0.0 ROBOT_YAW=0.0 SPAWN_DOCK=false", branch)
-        self.assertIn("colima start create3 --cpu 4 --memory 6", branch)
+        self.assertIn("colima -p create3 start --cpu 4 --memory 6", branch)
         self.assertIn("/world/room_camera/control", branch)
         self.assertIn('pause: false', branch)
         self.assertNotIn("roomba-tcp", branch)

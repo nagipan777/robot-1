@@ -1,0 +1,413 @@
+{
+  "evidence_class": "saved-real-image-replay-not-live-camera",
+  "physical_output": false,
+  "pico_contact": false,
+  "model": "runs/detect/real_finetune/weights/best.pt",
+  "model_sha256": "a1c863beb4db5048eecc34aaf898d7580518219cc6eb4db8f198ec5a0717a68d",
+  "confidence": 0.5,
+  "imgsz": 640,
+  "inference_payloads": {
+    "background": {
+      "timestamp": 1793104783.389212,
+      "capture_timestamp": 1793104783.389212,
+      "processing_completed_timestamp": 1793104788.140629,
+      "processing_latency_s": 4.75141716003418,
+      "image_width": 1280,
+      "image_height": 960,
+      "replay_source_width": 640,
+      "replay_source_height": 480,
+      "replay_resized_for_calibration": true,
+      "detections": []
+    },
+    "near": {
+      "timestamp": 1793104788.164777,
+      "capture_timestamp": 1793104788.164777,
+      "processing_completed_timestamp": 1793104788.582114,
+      "processing_latency_s": 0.41733694076538086,
+      "image_width": 1280,
+      "image_height": 960,
+      "replay_source_width": 640,
+      "replay_source_height": 480,
+      "replay_resized_for_calibration": true,
+      "detections": [
+        {
+          "label": "litter",
+          "confidence": 0.8976062536239624,
+          "center_x": 475.03094482421875,
+          "center_y": 672.5546875,
+          "bbox": [
+            436.6146240234375,
+            635.162109375,
+            513.447265625,
+            709.947265625
+          ]
+        }
+      ]
+    },
+    "far": {
+      "timestamp": 1793104788.589352,
+      "capture_timestamp": 1793104788.589352,
+      "processing_completed_timestamp": 1793104788.928738,
+      "processing_latency_s": 0.3393862247467041,
+      "image_width": 1280,
+      "image_height": 960,
+      "replay_source_width": 640,
+      "replay_source_height": 480,
+      "replay_resized_for_calibration": true,
+      "detections": [
+        {
+          "label": "litter",
+          "confidence": 0.8636045455932617,
+          "center_x": 752.4970703125,
+          "center_y": 239.3375244140625,
+          "bbox": [
+            723.53125,
+            200.33517456054688,
+            781.462890625,
+            278.3398742675781
+          ]
+        }
+      ]
+    }
+  },
+  "sent_events": [
+    {
+      "name": "initial_no_detection",
+      "sent_at": 1793104789.466476,
+      "payload": {
+        "timestamp": 1793104788.9299788,
+        "capture_timestamp": 1793104788.9299788,
+        "processing_completed_timestamp": 1793104788.9299788,
+        "processing_latency_s": 0.0,
+        "image_width": 1280,
+        "image_height": 960,
+        "replay_source_width": 640,
+        "replay_source_height": 480,
+        "replay_resized_for_calibration": true,
+        "detections": []
+      }
+    },
+    {
+      "name": "near_confirmation_1",
+      "sent_at": 1793104789.621699,
+      "payload": {
+        "timestamp": 1793104789.595854,
+        "capture_timestamp": 1793104789.595854,
+        "processing_completed_timestamp": 1793104789.595854,
+        "processing_latency_s": 0.0,
+        "image_width": 1280,
+        "image_height": 960,
+        "replay_source_width": 640,
+        "replay_source_height": 480,
+        "replay_resized_for_calibration": true,
+        "detections": [
+          {
+            "label": "litter",
+            "confidence": 0.8976062536239624,
+            "center_x": 475.03094482421875,
+            "center_y": 672.5546875,
+            "bbox": [
+              436.6146240234375,
+              635.162109375,
+              513.447265625,
+              709.947265625
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "near_confirmation_2",
+      "sent_at": 1793104789.77677,
+      "payload": {
+        "timestamp": 1793104789.751122,
+        "capture_timestamp": 1793104789.751122,
+        "processing_completed_timestamp": 1793104789.751122,
+        "processing_latency_s": 0.0,
+        "image_width": 1280,
+        "image_height": 960,
+        "replay_source_width": 640,
+        "replay_source_height": 480,
+        "replay_resized_for_calibration": true,
+        "detections": [
+          {
+            "label": "litter",
+            "confidence": 0.8976062536239624,
+            "center_x": 475.03094482421875,
+            "center_y": 672.5546875,
+            "bbox": [
+              436.6146240234375,
+              635.162109375,
+              513.447265625,
+              709.947265625
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "near_confirmation_3",
+      "sent_at": 1793104789.914939,
+      "payload": {
+        "timestamp": 1793104789.905995,
+        "capture_timestamp": 1793104789.905995,
+        "processing_completed_timestamp": 1793104789.905995,
+        "processing_latency_s": 0.0,
+        "image_width": 1280,
+        "image_height": 960,
+        "replay_source_width": 640,
+        "replay_source_height": 480,
+        "replay_resized_for_calibration": true,
+        "detections": [
+          {
+            "label": "litter",
+            "confidence": 0.8976062536239624,
+            "center_x": 475.03094482421875,
+            "center_y": 672.5546875,
+            "bbox": [
+              436.6146240234375,
+              635.162109375,
+              513.447265625,
+              709.947265625
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "explicit_detection_loss",
+      "sent_at": 1793104790.725755,
+      "payload": {
+        "timestamp": 1793104790.559875,
+        "capture_timestamp": 1793104790.559875,
+        "processing_completed_timestamp": 1793104790.559875,
+        "processing_latency_s": 0.0,
+        "image_width": 1280,
+        "image_height": 960,
+        "replay_source_width": 640,
+        "replay_source_height": 480,
+        "replay_resized_for_calibration": true,
+        "detections": []
+      }
+    },
+    {
+      "name": "same_target_reconfirmation_1",
+      "sent_at": 1793104790.882337,
+      "payload": {
+        "timestamp": 1793104790.852862,
+        "capture_timestamp": 1793104790.852862,
+        "processing_completed_timestamp": 1793104790.852862,
+        "processing_latency_s": 0.0,
+        "image_width": 1280,
+        "image_height": 960,
+        "replay_source_width": 640,
+        "replay_source_height": 480,
+        "replay_resized_for_calibration": true,
+        "detections": [
+          {
+            "label": "litter",
+            "confidence": 0.8976062536239624,
+            "center_x": 475.03094482421875,
+            "center_y": 672.5546875,
+            "bbox": [
+              436.6146240234375,
+              635.162109375,
+              513.447265625,
+              709.947265625
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "same_target_reconfirmation_2",
+      "sent_at": 1793104791.0174809,
+      "payload": {
+        "timestamp": 1793104791.005249,
+        "capture_timestamp": 1793104791.005249,
+        "processing_completed_timestamp": 1793104791.005249,
+        "processing_latency_s": 0.0,
+        "image_width": 1280,
+        "image_height": 960,
+        "replay_source_width": 640,
+        "replay_source_height": 480,
+        "replay_resized_for_calibration": true,
+        "detections": [
+          {
+            "label": "litter",
+            "confidence": 0.8976062536239624,
+            "center_x": 475.03094482421875,
+            "center_y": 672.5546875,
+            "bbox": [
+              436.6146240234375,
+              635.162109375,
+              513.447265625,
+              709.947265625
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "same_target_reconfirmation_3",
+      "sent_at": 1793104791.18516,
+      "payload": {
+        "timestamp": 1793104791.140095,
+        "capture_timestamp": 1793104791.140095,
+        "processing_completed_timestamp": 1793104791.140095,
+        "processing_latency_s": 0.0,
+        "image_width": 1280,
+        "image_height": 960,
+        "replay_source_width": 640,
+        "replay_source_height": 480,
+        "replay_resized_for_calibration": true,
+        "detections": [
+          {
+            "label": "litter",
+            "confidence": 0.8976062536239624,
+            "center_x": 475.03094482421875,
+            "center_y": 672.5546875,
+            "bbox": [
+              436.6146240234375,
+              635.162109375,
+              513.447265625,
+              709.947265625
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "different_target_confirmation_1",
+      "sent_at": 1793104791.327895,
+      "payload": {
+        "timestamp": 1793104791.314281,
+        "capture_timestamp": 1793104791.314281,
+        "processing_completed_timestamp": 1793104791.314281,
+        "processing_latency_s": 0.0,
+        "image_width": 1280,
+        "image_height": 960,
+        "replay_source_width": 640,
+        "replay_source_height": 480,
+        "replay_resized_for_calibration": true,
+        "detections": [
+          {
+            "label": "litter",
+            "confidence": 0.8636045455932617,
+            "center_x": 752.4970703125,
+            "center_y": 239.3375244140625,
+            "bbox": [
+              723.53125,
+              200.33517456054688,
+              781.462890625,
+              278.3398742675781
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "different_target_confirmation_2",
+      "sent_at": 1793104791.490944,
+      "payload": {
+        "timestamp": 1793104791.4553359,
+        "capture_timestamp": 1793104791.4553359,
+        "processing_completed_timestamp": 1793104791.4553359,
+        "processing_latency_s": 0.0,
+        "image_width": 1280,
+        "image_height": 960,
+        "replay_source_width": 640,
+        "replay_source_height": 480,
+        "replay_resized_for_calibration": true,
+        "detections": [
+          {
+            "label": "litter",
+            "confidence": 0.8636045455932617,
+            "center_x": 752.4970703125,
+            "center_y": 239.3375244140625,
+            "bbox": [
+              723.53125,
+              200.33517456054688,
+              781.462890625,
+              278.3398742675781
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "different_target_confirmation_3",
+      "sent_at": 1793104791.697835,
+      "payload": {
+        "timestamp": 1793104791.6278772,
+        "capture_timestamp": 1793104791.6278772,
+        "processing_completed_timestamp": 1793104791.6278772,
+        "processing_latency_s": 0.0,
+        "image_width": 1280,
+        "image_height": 960,
+        "replay_source_width": 640,
+        "replay_source_height": 480,
+        "replay_resized_for_calibration": true,
+        "detections": [
+          {
+            "label": "litter",
+            "confidence": 0.8636045455932617,
+            "center_x": 752.4970703125,
+            "center_y": 239.3375244140625,
+            "bbox": [
+              723.53125,
+              200.33517456054688,
+              781.462890625,
+              278.3398742675781
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "stale_image",
+      "sent_at": 1793104791.836106,
+      "payload": {
+        "timestamp": 1793104789.8252852,
+        "capture_timestamp": 1793104789.8252852,
+        "processing_completed_timestamp": 1793104789.8252852,
+        "processing_latency_s": 0.0,
+        "image_width": 1280,
+        "image_height": 960,
+        "replay_source_width": 640,
+        "replay_source_height": 480,
+        "replay_resized_for_calibration": true,
+        "detections": [
+          {
+            "label": "litter",
+            "confidence": 0.8976062536239624,
+            "center_x": 475.03094482421875,
+            "center_y": 672.5546875,
+            "bbox": [
+              436.6146240234375,
+              635.162109375,
+              513.447265625,
+              709.947265625
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "final_no_detection",
+      "sent_at": 1793104793.02793,
+      "payload": {
+        "timestamp": 1793104792.947357,
+        "capture_timestamp": 1793104792.947357,
+        "processing_completed_timestamp": 1793104792.947357,
+        "processing_latency_s": 0.0,
+        "image_width": 1280,
+        "image_height": 960,
+        "replay_source_width": 640,
+        "replay_source_height": 480,
+        "replay_resized_for_calibration": true,
+        "detections": []
+      }
+    }
+  ]
+}

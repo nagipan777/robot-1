@@ -1,0 +1,12 @@
+{
+  "evidence_class": "saved-real-image-replay-not-live-camera",
+  "source": "artifacts/short_e_wheel_lift/short_e_20261026T115353/diagnostics/aruco_only.jpg",
+  "dictionary": "DICT_4X4_50",
+  "image_width": 1280,
+  "image_height": 960,
+  "detected_ids": [0],
+  "id0_corners": [[531.0, 680.0], [718.0, 677.0], [731.0, 807.0], [523.0, 819.0]],
+  "pose_calibration_ready": false,
+  "pose_output_enabled": false,
+  "live_camera_pass": false
+}

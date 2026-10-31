@@ -20,8 +20,8 @@ class RealCameraPicoE2EConfigTests(unittest.TestCase):
         self.assertIn("dry_run_enabled and control_enabled cannot both be true", self.controller)
 
     def test_real_camera_calibration_and_guard_are_explicit(self):
-        self.assertRegex(self.config, r"(?m)^\s*calibration_image_width:\s*1280$")
-        self.assertRegex(self.config, r"(?m)^\s*calibration_image_height:\s*960$")
+        self.assertRegex(self.config, r"(?m)^\s*calibration_image_width:\s*800$")
+        self.assertRegex(self.config, r"(?m)^\s*calibration_image_height:\s*600$")
         self.assertRegex(self.config, r"(?m)^\s*robot_guard_radius:\s*0\.5$")
         self.assertRegex(self.config, r"(?m)^\s*max_robot_pose_age:\s*1\.0$")
         self.assertRegex(self.config, r"(?m)^\s*min_detection_confidence:\s*0\.50$")
@@ -131,6 +131,72 @@ class RealCameraPicoE2EConfigTests(unittest.TestCase):
         fixed_end = supervisor.index("[program:pico-dry-run-bridge]", fixed_start)
         fixed = supervisor[fixed_start:fixed_end]
         self.assertNotIn("real-aruco-dry-run", fixed)
+
+    def test_minimal_aruco_bridge_excludes_motion_and_simulation_processes(self):
+        minimal = (
+            ROOT / "simulation/supervisord.real_camera_aruco_minimal.conf"
+        ).read_text()
+        self.assertIn("[program:webcam-bridge]", minimal)
+        self.assertIn("[program:aruco-pose]", minimal)
+        for forbidden_program in (
+            "create3",
+            "vision-turn-controller",
+            "cmd-vel-output-adapter",
+            "pico-dry-run-bridge",
+            "unstamped-cmd-relay",
+            "dry-run-pose-publisher",
+        ):
+            self.assertNotIn(
+                "[program:{}]".format(forbidden_program), minimal.lower()
+            )
+        self.assertNotIn("start-simulation", minimal)
+        self.assertNotIn("gazebo", minimal.lower())
+
+    def test_minimal_aruco_bridge_command_fixes_camera_contract(self):
+        script = (ROOT / "simulation/sim.sh").read_text()
+        self.assertIn("real-camera-aruco-minimal-up)", script)
+        self.assertIn("--camera 0 --width 800 --height 600", script)
+        self.assertIn("--confidence 0.50 --imgsz 640", script)
+        self.assertIn("--aruco-marker-id 0", script)
+        self.assertIn("real-camera-aruco-minimal.conf", (
+            ROOT / "simulation/compose.real_camera_aruco_minimal.yaml"
+        ).read_text())
+        self.assertIn(
+            "COPY supervisord.real_camera_aruco_minimal.conf",
+            (ROOT / "simulation/Dockerfile").read_text(),
+        )
+
+    def test_ai_dry_run_has_only_nonphysical_pipeline_nodes(self):
+        supervisor = (
+            ROOT / "simulation/supervisord.real_camera_ai_dry_run.conf"
+        ).read_text()
+        for program in (
+            "webcam-bridge",
+            "aruco-pose",
+            "vision-turn-controller",
+            "cmd-vel-output-adapter",
+        ):
+            self.assertIn(f"[program:{program}]", supervisor)
+        for forbidden in ("pico", "roomba-bridge", "create3", "gazebo"):
+            self.assertNotIn(f"[program:{forbidden}]", supervisor)
+        self.assertIn("vision-controller.real-aruco-dry-run.yaml", supervisor)
+        self.assertIn("cmd-vel-output-adapter.yaml", supervisor)
+
+        compose = (
+            ROOT / "simulation/compose.real_camera_ai_dry_run.yaml"
+        ).read_text()
+        self.assertIn("real-camera-ai-dry-run.conf", compose)
+
+        script = (ROOT / "simulation/sim.sh").read_text()
+        self.assertIn("real-camera-ai-dry-run-up)", script)
+        self.assertIn("real-camera-ai-dry-run-status)", script)
+        self.assertIn("real-camera-ai-dry-run-down)", script)
+
+        probe = (ROOT / "simulation/ai_dry_run_gate_test.py").read_text()
+        self.assertIn('"evidence_class": "synthetic_ros_nonphysical"', probe)
+        self.assertIn('"physical_output": False', probe)
+        self.assertNotIn("socket", probe)
+        self.assertNotIn("/roomba/cmd_vel_unstamped", probe)
 
     def test_evidence_recorder_captures_live_aruco_yaw(self):
         recorder = (ROOT / "simulation/e2e_dry_run_recorder.py").read_text()

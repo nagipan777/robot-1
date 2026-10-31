@@ -23,9 +23,9 @@ vision_turn_controller:
     target_marker_topic: /litter/target_marker
     reached_topic: /litter/reached
 
-    image_to_odom_homography: [2.271875105e-05, -0.002563034829, 2.924257728, -0.00167332933, 2.362981057e-05, 1.038104632, 3.022370992e-05, 2.631257443e-05, 1.0]
-    calibration_image_width: 1280
-    calibration_image_height: 960
+    image_to_odom_homography: [-0.001470399292974724, 0.0037626294410314717, 5.797794949988258, -0.008284737151183564, -0.0003804983196974422, 3.566416130572197, -0.001447932227919006, 0.017275494400635284, 1.0]
+    calibration_image_width: 800
+    calibration_image_height: 600
     max_detection_age: 1.0
     min_detection_confidence: 0.50
     target_confirmation_count: 3

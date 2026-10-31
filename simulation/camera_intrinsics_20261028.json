@@ -1,0 +1,77 @@
+{
+  "model": "opencv_pinhole_radial_tangential",
+  "image_width": 800,
+  "image_height": 600,
+  "checkerboard_inner_corners": [
+    7,
+    10
+  ],
+  "square_size_m": 0.02,
+  "usable_view_count": 7,
+  "rejected_view_count": 0,
+  "rms_reprojection_error_px": 0.7438429090553375,
+  "camera_matrix": [
+    [
+      916.4948151396367,
+      0.0,
+      419.79088434832465
+    ],
+    [
+      0.0,
+      970.0133303667837,
+      296.69621463627817
+    ],
+    [
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "distortion_coefficients": [
+    -0.0007758160643773863,
+    1.2907640232581803,
+    -0.026312432116441457,
+    0.0003332706294362315,
+    -4.1703180760117515
+  ],
+  "per_view_errors": [
+    {
+      "image": "artifacts/camera_calibration_20261028/intrinsics_flat/view_04_pitch_up.png",
+      "rms_px": 0.2863240697598082
+    },
+    {
+      "image": "artifacts/camera_calibration_20261028/intrinsics_flat/view_05_rotated_clockwise.png",
+      "rms_px": 0.7952275518890907
+    },
+    {
+      "image": "artifacts/camera_calibration_20261028/intrinsics_flat/view_06_rotated_counterclockwise.png",
+      "rms_px": 0.9835905354106798
+    },
+    {
+      "image": "artifacts/camera_calibration_20261028/intrinsics_flat/view_07_left_flat.png",
+      "rms_px": 0.8333539621993542
+    },
+    {
+      "image": "artifacts/camera_calibration_20261028/intrinsics_flat/view_08_right_flat.png",
+      "rms_px": 0.9586326897944556
+    },
+    {
+      "image": "artifacts/camera_calibration_20261028/intrinsics_flat/view_11_rigid_left_up.png",
+      "rms_px": 0.7005156871664948
+    },
+    {
+      "image": "artifacts/camera_calibration_20261028/intrinsics_flat/view_12_rigid_far_edge_up.png",
+      "rms_px": 0.2951448386471348
+    }
+  ],
+  "used_images": [
+    "artifacts/camera_calibration_20261028/intrinsics_flat/view_04_pitch_up.png",
+    "artifacts/camera_calibration_20261028/intrinsics_flat/view_05_rotated_clockwise.png",
+    "artifacts/camera_calibration_20261028/intrinsics_flat/view_06_rotated_counterclockwise.png",
+    "artifacts/camera_calibration_20261028/intrinsics_flat/view_07_left_flat.png",
+    "artifacts/camera_calibration_20261028/intrinsics_flat/view_08_right_flat.png",
+    "artifacts/camera_calibration_20261028/intrinsics_flat/view_11_rigid_left_up.png",
+    "artifacts/camera_calibration_20261028/intrinsics_flat/view_12_rigid_far_edge_up.png"
+  ],
+  "rejected_images": []
+}

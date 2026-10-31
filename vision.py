@@ -1,5 +1,7 @@
 import argparse
+import hashlib
 import json
+import platform
 import time
 import urllib.error
 import urllib.request
@@ -9,6 +11,7 @@ import cv2
 
 
 DEFAULT_CONFIDENCE = 0.5
+DEFAULT_IMAGE_SIZE = 640
 
 
 def confidence_threshold(value):
@@ -17,6 +20,14 @@ def confidence_threshold(value):
     if not 0.0 <= threshold <= 1.0:
         raise argparse.ArgumentTypeError("confidence must be between 0 and 1")
     return threshold
+
+
+def model_sha256(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def select_video_source(camera, video_url):
@@ -37,6 +48,8 @@ def open_video_capture(source, network_stream=False):
                 5000,
             ],
         )
+    if platform.system() == "Darwin":
+        return cv2.VideoCapture(source, cv2.CAP_AVFOUNDATION)
     return cv2.VideoCapture(source)
 
 
@@ -139,6 +152,12 @@ def main():
         help="YOLO検出信頼度の下限（既定: 0.5）",
     )
     parser.add_argument(
+        "--imgsz",
+        type=int,
+        default=DEFAULT_IMAGE_SIZE,
+        help="YOLO inference image size (default: 640)",
+    )
+    parser.add_argument(
         "--aruco-marker-id",
         type=int,
         default=-1,
@@ -154,6 +173,8 @@ def main():
         parser.error("--http-timeout must be greater than zero")
     if args.width <= 0 or args.height <= 0:
         parser.error("--width and --height must be positive")
+    if args.imgsz <= 0:
+        parser.error("--imgsz must be positive")
     simulator = (
         SimulatorConnection(args.simulator, args.http_timeout)
         if args.simulator
@@ -169,7 +190,15 @@ def main():
         model = YOLO(args.weights)
         if model.task != "detect":
             parser.error("物体検出用のYOLOモデルを --weights で指定してください。")
-        print(f"YOLOモデルを読み込みました: {args.weights}")
+        print(
+            "YOLOモデルを読み込みました: {} sha256={} confidence={:.2f} "
+            "imgsz={}".format(
+                args.weights,
+                model_sha256(args.weights),
+                args.confidence,
+                args.imgsz,
+            )
+        )
     aruco_detector = None
     if args.aruco_marker_id >= 0:
         try:
@@ -220,6 +249,10 @@ def main():
                     break
                 time.sleep(0.1)
                 continue
+            # Acquisition time is captured before ArUco/YOLO processing.  It
+            # remains the safety freshness timestamp; processing completion is
+            # reported separately for latency evidence.
+            capture_timestamp = time.time()
             last_frame_at = time.monotonic()
             if not received_frame:
                 actual_height, actual_width = frame.shape[:2]
@@ -240,7 +273,12 @@ def main():
                     aruco_detector, frame, args.aruco_marker_id
                 )
             if model is not None:
-                result = model.predict(frame, conf=args.confidence, verbose=False)[0]
+                result = model.predict(
+                    frame,
+                    conf=args.confidence,
+                    imgsz=args.imgsz,
+                    verbose=False,
+                )[0]
                 for box in result.boxes:
                     x1, y1, x2, y2 = box.xyxy[0].cpu().tolist()
                     center_x = (x1 + x2) / 2
@@ -267,9 +305,16 @@ def main():
                 cv2.aruco.drawDetectedMarkers(frame, aruco_corners, aruco_ids)
 
             if simulator is not None:
+                processing_completed_timestamp = time.time()
                 simulator.send(
                     {
-                        "timestamp": time.time(),
+                        "timestamp": capture_timestamp,
+                        "capture_timestamp": capture_timestamp,
+                        "processing_completed_timestamp": processing_completed_timestamp,
+                        "processing_latency_s": max(
+                            0.0,
+                            processing_completed_timestamp - capture_timestamp,
+                        ),
                         "image_width": int(frame.shape[1]),
                         "image_height": int(frame.shape[0]),
                         "detections": detections,

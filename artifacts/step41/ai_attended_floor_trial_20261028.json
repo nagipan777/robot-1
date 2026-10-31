@@ -1,0 +1,34 @@
+{
+  "arm_ack_bytes": 7,
+  "arm_generation": 1793199001,
+  "arm_status": "accepted_and_committed",
+  "brc_wake_enabled": false,
+  "command_timeout_ms": 500,
+  "drive_ack_sequences": [1, 2, 3, 4, 5, 6, 7],
+  "drive_session_timeout_ms": 400,
+  "evidence_class": "human_attended_physical_floor_trial",
+  "final_allow_nonzero_drive": false,
+  "final_oi_mode": 2,
+  "final_requested_left_mm_s": 0,
+  "final_requested_right_mm_s": 0,
+  "final_stop_ack": 7,
+  "first_drive_at_ms": 3240159,
+  "human_observation": {
+    "abnormal_sound": false,
+    "forward_motion_observed": true,
+    "restart_observed": false,
+    "wheels_stopped": true
+  },
+  "max_wheel_speed_mm_s": 20,
+  "model_sha256": "3e1de3c72c6d807fd527cefc6b70801275e3a9b54bb9daa8d87a59dc7be12b03",
+  "nonzero_duration_to_stop_ms": 289,
+  "normal_stop_at_ms": 3240448,
+  "pass": true,
+  "physical_bridge_process_count": 1,
+  "ros_arm_subscription_count": 1,
+  "trial_date": "2026-10-28",
+  "wheel_commands_mm_s": {
+    "left": 20,
+    "right": 20
+  }
+}

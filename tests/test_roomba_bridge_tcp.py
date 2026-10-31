@@ -1,8 +1,169 @@
+import importlib.util
 import pathlib
+import sys
+import types
 import unittest
+from unittest import mock
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+
+
+def load_bridge_module():
+    class Node:
+        pass
+
+    class Twist:
+        def __init__(self):
+            self.linear = types.SimpleNamespace(x=0.0)
+            self.angular = types.SimpleNamespace(z=0.0)
+
+    class UInt32:
+        def __init__(self):
+            self.data = 0
+
+    class QoSProfile:
+        def __init__(self, **_kwargs):
+            pass
+
+    rclpy = types.ModuleType("rclpy")
+    rclpy_node = types.ModuleType("rclpy.node")
+    rclpy_node.Node = Node
+    rclpy_qos = types.ModuleType("rclpy.qos")
+    rclpy_qos.QoSProfile = QoSProfile
+    rclpy_qos.DurabilityPolicy = types.SimpleNamespace(VOLATILE=1)
+    rclpy_qos.HistoryPolicy = types.SimpleNamespace(KEEP_LAST=1)
+    rclpy_qos.ReliabilityPolicy = types.SimpleNamespace(RELIABLE=1)
+    geometry_msgs = types.ModuleType("geometry_msgs")
+    geometry_msgs_msg = types.ModuleType("geometry_msgs.msg")
+    geometry_msgs_msg.Twist = Twist
+    std_msgs = types.ModuleType("std_msgs")
+    std_msgs_msg = types.ModuleType("std_msgs.msg")
+    std_msgs_msg.UInt32 = UInt32
+    modules = {
+        "rclpy": rclpy,
+        "rclpy.node": rclpy_node,
+        "rclpy.qos": rclpy_qos,
+        "geometry_msgs": geometry_msgs,
+        "geometry_msgs.msg": geometry_msgs_msg,
+        "std_msgs": std_msgs,
+        "std_msgs.msg": std_msgs_msg,
+    }
+    path = ROOT / "simulation" / "roomba_bridge_tcp.py"
+    spec = importlib.util.spec_from_file_location("roomba_bridge_runtime_test", path)
+    module = importlib.util.module_from_spec(spec)
+    with mock.patch.dict(sys.modules, modules), mock.patch.object(
+        sys, "path", [str(ROOT / "simulation")] + sys.path
+    ):
+        spec.loader.exec_module(module)
+    return module
+
+
+class FakeLogger:
+    def __init__(self):
+        self.messages = []
+
+    def info(self, message):
+        self.messages.append(("info", message))
+
+    def warn(self, message):
+        self.messages.append(("warn", message))
+
+
+class FakeTrace:
+    def record(self, *_args, **_kwargs):
+        pass
+
+
+class QuantizingTransport:
+    def __init__(self, results):
+        self.connected = True
+        self.armed_generation = 77
+        self.results = list(results)
+        self.send_calls = 0
+        self.close_calls = 0
+        self.stop_calls = 0
+
+    def send_twist(self, *_args, **_kwargs):
+        self.send_calls += 1
+        result = self.results.pop(0)
+        if result is None:
+            self.stop_calls += 1
+            self.armed_generation = None
+        return result
+
+    def close(self, **_kwargs):
+        self.close_calls += 1
+        self.connected = False
+
+
+def make_runtime_bridge(module, transport):
+    clock = lambda: 10.0
+    bridge = module.RoombaBridgeTcp.__new__(module.RoombaBridgeTcp)
+    bridge.transport = transport
+    bridge.command_state = module.CommandState(True, 0.5, clock)
+    bridge.drive_session_limiter = module.DriveSessionLimiter(0.4, clock)
+    bridge.drive_session_limiter.arm()
+    bridge.watchdog_test_state = module.WatchdogTestCommandState(0.75, clock)
+    bridge.safe_gate = module.SafeModeGate()
+    bridge.safe_gate.establish(7, 0, 0, 2)
+    bridge.latency_trace = FakeTrace()
+    bridge.watchdog_test_mode = False
+    bridge.drive_enabled = True
+    bridge.disabled_rejection_logged = False
+    bridge.command_topic = "/roomba/cmd_vel_unstamped"
+    bridge.next_safe_check = 1.0e12
+    bridge.next_retry = 0.0
+    bridge.arm_deadline = 20.0
+    bridge.idle_stop_sent = False
+    bridge.bounded_drive_rejection_logged = False
+    bridge.watchdog_preflight_logged = False
+    bridge.wheel_base = 0.235
+    bridge.max_speed_mm_s = 20
+    bridge.max_drive_session_duration = 0.4
+    bridge.get_logger = lambda: bridge.logger
+    bridge.logger = FakeLogger()
+    return bridge
+
+
+class RoombaBridgeRuntimeTests(unittest.TestCase):
+    def test_bounded_quantized_zero_is_stop_without_reconnect_or_stop_spam(self):
+        module = load_bridge_module()
+        transport = QuantizingTransport([None])
+        bridge = make_runtime_bridge(module, transport)
+        command = module.Twist()
+        command.linear.x = 0.0004
+
+        bridge.on_cmd(command)
+        bridge.tick()
+        bridge.tick()
+
+        self.assertEqual(transport.send_calls, 1)
+        self.assertEqual(transport.stop_calls, 1)
+        self.assertEqual(transport.close_calls, 0)
+        self.assertTrue(transport.connected)
+        self.assertIsNone(transport.armed_generation)
+        self.assertTrue(bridge.idle_stop_sent)
+        self.assertIsNone(bridge.command_state.current())
+        self.assertFalse(
+            any("bounded Drive ACK" in message for _level, message in bridge.logger.messages)
+        )
+
+        ack_transport = QuantizingTransport([12])
+        ack_bridge = make_runtime_bridge(module, ack_transport)
+        ack_command = module.Twist()
+        ack_command.linear.x = 0.02
+        ack_bridge.on_cmd(ack_command)
+        ack_bridge.tick()
+
+        self.assertEqual(ack_transport.close_calls, 0)
+        self.assertFalse(ack_bridge.idle_stop_sent)
+        self.assertTrue(
+            any(
+                "bounded Drive ACK: status=0x03 sequence=12" in message
+                for _level, message in ack_bridge.logger.messages
+            )
+        )
 
 
 class RoombaBridgeTcpIntegrationTests(unittest.TestCase):
@@ -81,7 +242,8 @@ class RoombaBridgeTcpIntegrationTests(unittest.TestCase):
         self.assertIn("self.safe_gate.establish(status, right, left, mode)", connect)
         self.assertIn("self.safe_gate.permits", on_cmd)
         self.assertIn("Rejected non-zero command: drive_enabled=false", on_cmd)
-        self.assertIn("query_oi_mode(live=True)", tick)
+        self.assertIn("self.transport.query_oi_mode(", tick)
+        self.assertIn("live=True", tick)
         self.assertIn("self.safe_gate.observe_mode(mode)", tick)
         self.assertIn("self.handle_safety_failure(error)", tick)
 
@@ -127,6 +289,9 @@ class RoombaBridgeTcpIntegrationTests(unittest.TestCase):
         sim_script = (ROOT / "simulation" / "sim.sh").read_text()
         self.assertIn("COPY roomba_bridge_tcp.py /usr/local/bin/roomba-bridge-tcp", dockerfile)
         self.assertIn("COPY roomba_tcp_transport.py", dockerfile)
+        self.assertIn("COPY latency_trace.py", dockerfile)
+        self.assertIn("COPY roomba_latency_probe.py", dockerfile)
+        self.assertIn("COPY navigation_latency_probe.py", dockerfile)
         self.assertIn("COPY differential_drive.py", dockerfile)
         self.assertNotIn("roomba-bridge-tcp", supervisor)
         self.assertIn("roomba-tcp PICO_IP [PORT]", sim_script)
@@ -143,7 +308,7 @@ class RoombaBridgeTcpIntegrationTests(unittest.TestCase):
     def test_diagnostic_command_remains_stop_only(self):
         sim_script = (ROOT / "simulation" / "sim.sh").read_text()
         start = sim_script.index("  roomba-tcp-diagnostic)")
-        case = sim_script[start : sim_script.index("  roomba-short-e-bridge)", start)]
+        case = sim_script[start : sim_script.index("  roomba-short-e-bridge|", start)]
         self.assertIn("-p drive_enabled:=false", case)
         self.assertIn("-p diagnostic_on_connect:=true", case)
         self.assertIn("-p watchdog_test_mode:=false", case)
@@ -164,9 +329,10 @@ class RoombaBridgeTcpIntegrationTests(unittest.TestCase):
 
     def test_short_e_launcher_requires_wheel_lift_and_hard_bounds(self):
         sim_script = (ROOT / "simulation" / "sim.sh").read_text()
-        start = sim_script.index("  roomba-short-e-bridge)")
+        start = sim_script.index("  roomba-short-e-bridge|")
         case = sim_script[start : sim_script.index("  roomba-tcp-watchdog)", start)]
-        self.assertIn('"$3" != "WHEELS_LIFTED"', case)
+        self.assertIn('bridge_confirmation="WHEELS_LIFTED"', case)
+        self.assertIn('"$3" != "$bridge_confirmation"', case)
         self.assertIn("-p drive_enabled:=true", case)
         self.assertIn("-p diagnostic_on_connect:=true", case)
         self.assertIn("-p watchdog_test_mode:=false", case)
@@ -175,13 +341,93 @@ class RoombaBridgeTcpIntegrationTests(unittest.TestCase):
         self.assertIn("-p max_drive_session_duration:=0.4", case)
         self.assertIn("-p command_topic:=/roomba/cmd_vel_unstamped", case)
 
+    def test_short_e_launcher_forwards_signals_and_rejects_duplicates(self):
+        sim_script = (ROOT / "simulation" / "sim.sh").read_text()
+        start = sim_script.index("  roomba-short-e-bridge|")
+        case = sim_script[start : sim_script.index("  roomba-tcp-watchdog)", start)]
+        self.assertIn('exec 9>/tmp/roomba-short-e-bridge.lock', case)
+        self.assertIn("flock -n 9", case)
+        self.assertIn("Refusing duplicate roomba-short-e-bridge", case)
+        self.assertIn("cleanup_short_e_bridge", case)
+        self.assertIn("interrupt_short_e_bridge", case)
+        self.assertIn("keep_short_e_stdin_open", case)
+        self.assertIn('kill -0 "$short_e_launcher_pid"', case)
+        self.assertIn("exec 8<&0", case)
+        self.assertIn("read -r -t 0.5 heartbeat", case)
+        self.assertIn('if [ "$heartbeat_status" -eq 1 ]', case)
+        self.assertIn('if [ "$heartbeat_timeouts" -ge 2 ]', case)
+        self.assertIn('wait -n "$bridge_pid" "$stdin_monitor_pid"', case)
+        self.assertIn("trap cleanup_short_e_bridge EXIT", case)
+        self.assertIn('wait "$short_e_exec_pid"', case)
+        self.assertIn('kill -INT "$pid"', case)
+        self.assertIn('/usr/local/bin/roomba-bridge-tcp --ros-args', case)
+        self.assertIn('exec -T simulator bash -lc', case)
+
+    def test_attended_floor_launcher_requires_distinct_explicit_confirmation(self):
+        sim_script = (ROOT / "simulation" / "sim.sh").read_text()
+        start = sim_script.index("  roomba-short-e-bridge|")
+        case = sim_script[start : sim_script.index("  roomba-tcp-watchdog)", start)]
+        self.assertIn("roomba-attended-floor-bridge", case)
+        self.assertIn('bridge_confirmation="ATTENDED_FLOOR"', case)
+        self.assertIn('"$3" != "$bridge_confirmation"', case)
+        self.assertIn("-p max_speed_mm_s:=20", case)
+        self.assertIn("-p command_timeout:=0.5", case)
+        self.assertIn("-p max_drive_session_duration:=0.4", case)
+
     def test_bounded_drive_gate_defaults_off_and_revokes_arm_on_deadline(self):
         source = (ROOT / "simulation" / "roomba_bridge_tcp.py").read_text()
         self.assertIn('declare_parameter("max_drive_session_duration", 0.0)', source)
         self.assertIn("self.drive_session_limiter.poll()", source)
         self.assertIn("self.expire_bounded_drive()", source)
-        self.assertIn("bounded drive deadline reached: STOP sent, ARM revoked", source)
+        self.assertIn("bounded drive deadline detected: STOP send starts next", source)
         self.assertIn("bounded Drive ACK: status=0x03", source)
+
+    def test_deadline_is_checked_after_safe_query_and_at_tcp_dispatch(self):
+        bridge = (ROOT / "simulation" / "roomba_bridge_tcp.py").read_text()
+        transport = (ROOT / "simulation" / "roomba_tcp_transport.py").read_text()
+        tick = bridge[bridge.index("    def tick(self):") : bridge.index("    def tick_watchdog_test")]
+        self.assertLess(tick.index("self.transport.query_oi_mode("), tick.index("permits_dispatch()"))
+        self.assertIn("deadline_monotonic=self.drive_session_limiter.deadline", tick)
+        self.assertIn("dispatch_checked_at >= deadline_monotonic", transport)
+        self.assertIn("self.create_timer(0.05, self.tick)", bridge)
+        self.assertIn(
+            "self.create_timer(0.01, self.tick_drive_deadline)", bridge
+        )
+
+    def test_deadline_timer_only_expires_an_active_connected_session(self):
+        source = (ROOT / "simulation" / "roomba_bridge_tcp.py").read_text()
+        method = source[
+            source.index("    def tick_drive_deadline") : source.index(
+                "    def tick_watchdog_test"
+            )
+        ]
+        self.assertIn("self.transport.connected", method)
+        self.assertIn("self.drive_session_limiter.poll()", method)
+        self.assertIn("self.expire_bounded_drive()", method)
+        self.assertNotIn("send_twist", method)
+
+    def test_routine_idle_stop_does_not_emit_deadline_timing_log(self):
+        source = (ROOT / "simulation" / "roomba_bridge_tcp.py").read_text()
+        send_stop = source[
+            source.index("    def send_stop") : source.index("    def expire_bounded_drive")
+        ]
+        expire = source[
+            source.index("    def expire_bounded_drive") : source.index("    def handle_send_failure")
+        ]
+        self.assertIn("if record_timing:", send_stop)
+        self.assertIn("self.send_stop(record_timing=True)", expire)
+
+    def test_idle_stop_is_one_shot_until_nonzero_drive(self):
+        source = (ROOT / "simulation" / "roomba_bridge_tcp.py").read_text()
+        tick = source[
+            source.index("    def tick(self):") : source.index("    def tick_watchdog_test")
+        ]
+        send_stop = source[
+            source.index("    def send_stop") : source.index("    def expire_bounded_drive")
+        ]
+        self.assertIn("if not self.idle_stop_sent:", tick)
+        self.assertIn("self.idle_stop_sent = False", tick)
+        self.assertIn("self.idle_stop_sent = True", send_stop)
 
 
 if __name__ == "__main__":

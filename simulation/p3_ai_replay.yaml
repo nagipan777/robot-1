@@ -1,0 +1,13 @@
+p3_ai_replay:
+  model_path: runs/detect/real_finetune/weights/best.pt
+  model_sha256: a1c863beb4db5048eecc34aaf898d7580518219cc6eb4db8f198ec5a0717a68d
+  confidence: 0.50
+  imgsz: 640
+  target_confirmation_count: 3
+  target_confirmation_distance_m: 0.20
+  robot_guard_radius_m: 0.50
+  max_detection_age_s: 1.0
+  max_robot_pose_age_s: 1.0
+  physical_output_enabled: false
+  pose_calibration_ready: false
+  pose_output_enabled: false

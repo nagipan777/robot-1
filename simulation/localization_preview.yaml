@@ -4,11 +4,14 @@ wheel_odometry:
     preview_enabled: true
     input_topic: /localization/encoder_counts_mock
     output_topic: /localization/wheel_odom
+    frame_id: odom
+    child_frame_id: base_link
     # Provisional Roomba 680 values; measure/verify before hardware-live use.
     encoder_counts_per_rev: 508.8
     wheel_diameter_m: 0.072
     wheel_separation_m: 0.235
     max_tick_delta: 2000
+    max_time_gap_s: 1.0
 
 localization_fusion:
   ros__parameters:

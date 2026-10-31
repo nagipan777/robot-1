@@ -48,6 +48,23 @@ class LocalizationConfigTests(unittest.TestCase):
         bridge = (ROOT / "simulation/roomba_bridge_tcp.py").read_text()
         self.assertIn('self.declare_parameter("drive_enabled", False)', bridge)
 
+    def test_roomba_odometry_observer_is_opt_in_and_navigation_independent(self):
+        config = (ROOT / "simulation/roomba_odometry_observer.yaml").read_text()
+        self.assertIn("odometry_enabled: false", config)
+        self.assertIn("input_topic: /roomba/encoder_counts", config)
+        self.assertIn("output_topic: /roomba/odom", config)
+        self.assertIn("frame_id: roomba_odom", config)
+        self.assertIn("child_frame_id: roomba_base_link", config)
+        node = (ROOT / "simulation/wheel_odometry_node.py").read_text()
+        self.assertNotIn("TransformBroadcaster", node)
+        self.assertNotIn('create_publisher(PoseStamped, "/robot/pose"', node)
+        self.assertNotIn("import socket", node)
+        self.assertNotIn("import serial", node)
+        rviz = (ROOT / "simulation/roomba_odometry.rviz").read_text()
+        self.assertIn("Fixed Frame: roomba_odom", rviz)
+        self.assertIn("Value: /roomba/odom", rviz)
+        self.assertNotIn("TFDisplay", rviz)
+
 
 if __name__ == "__main__":
     unittest.main()

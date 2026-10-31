@@ -51,6 +51,8 @@ class WheelUpdate:
     angular_velocity: float
     timestamp: float
     initialized: bool
+    left_delta: int = 0
+    right_delta: int = 0
 
 
 class WheelOdometry:
@@ -103,7 +105,59 @@ class WheelOdometry:
         self.previous = (left, right)
         self.last_timestamp = timestamp
         return WheelUpdate(
-            self.pose, distance / dt, delta_yaw / dt, timestamp, True
+            self.pose,
+            distance / dt,
+            delta_yaw / dt,
+            timestamp,
+            True,
+            dl_ticks,
+            dr_ticks,
+        )
+
+    def resynchronize(self):
+        """Keep pose but require the next valid counts to establish a baseline."""
+        self.previous = None
+        self.last_timestamp = None
+
+
+@dataclass(frozen=True)
+class PoseComparison:
+    aruco_relative: Pose2D
+    position_error_m: float
+    yaw_error_rad: float
+    aruco_age_s: float
+
+
+class RelativePoseComparator:
+    """Compare local odometry with ArUco displacement without mixing frames."""
+
+    def __init__(self):
+        self.aruco_origin = None
+        self.latest_aruco = None
+        self.latest_timestamp = None
+
+    def observe_aruco(self, pose, timestamp):
+        timestamp = _finite(timestamp, "ArUco timestamp")
+        if self.latest_timestamp is not None and timestamp <= self.latest_timestamp:
+            raise ValueError("ArUco timestamp must increase")
+        pose = Pose2D(*map(float, (pose.x, pose.y, pose.yaw)))
+        if self.aruco_origin is None:
+            self.aruco_origin = pose
+        self.latest_aruco = pose
+        self.latest_timestamp = timestamp
+
+    def compare(self, odom_pose, timestamp):
+        timestamp = _finite(timestamp, "odometry timestamp")
+        if self.latest_aruco is None:
+            return None
+        relative = compose(inverse(self.aruco_origin), self.latest_aruco)
+        dx = odom_pose.x - relative.x
+        dy = odom_pose.y - relative.y
+        return PoseComparison(
+            relative,
+            math.hypot(dx, dy),
+            normalize_angle(odom_pose.yaw - relative.yaw),
+            timestamp - self.latest_timestamp,
         )
 
 

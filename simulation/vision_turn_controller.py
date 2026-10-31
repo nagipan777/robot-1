@@ -14,6 +14,8 @@ from rclpy.signals import SignalHandlerOptions
 from std_msgs.msg import Bool, String
 from visualization_msgs.msg import Marker
 
+from latency_trace import LatencyTrace
+
 from target_manager import (
     SafeTargetManager,
     SpatialConfirmationFilter,
@@ -98,6 +100,12 @@ class VisionTurnController(Node):
         self.declare_parameter("forward_angle_tolerance", 0.15)
         self.declare_parameter("robot_guard_radius", 0.5)
         self.declare_parameter("max_robot_pose_age", 1.0)
+        self.declare_parameter("latency_trace_path", "")
+
+        self.latency_trace = LatencyTrace(
+            self.get_parameter("latency_trace_path").value,
+            component="vision_turn_controller",
+        )
 
         self.robot_pose = None
         self.pose_received_at = 0.0
@@ -406,6 +414,10 @@ class VisionTurnController(Node):
     def publish_target(self, confidence, detection_timestamp):
         stamp = self.get_clock().now().to_msg()
         frame = self.get_parameter("detection_target_frame").value
+        # Direct candidate processing may reject and clear self.target_* before
+        # this method returns (for example, the 50 cm robot guard). Preserve
+        # immutable values for the evidence log.
+        pixel_x, pixel_y = self.target_pixel
         target_x, target_y = self.target_odom
 
         point = PointStamped()
@@ -427,7 +439,6 @@ class VisionTurnController(Node):
 
         now = time.monotonic()
         if now - self.last_target_log_at >= 1.0:
-            pixel_x, pixel_y = self.target_pixel
             self.get_logger().info(
                 f"litter pixel=({pixel_x:.1f}, {pixel_y:.1f}) -> "
                 f"{frame}=({target_x:.3f}, {target_y:.3f}), confidence={confidence:.3f}"
@@ -487,7 +498,16 @@ class VisionTurnController(Node):
         self.stop_if_active()
 
     def publish_stop(self):
-        self.active_publisher().publish(Twist())
+        command = Twist()
+        self.latency_trace.record(
+            "navigation_command_created",
+            command_kind="stop",
+            linear_x=0.0,
+            angular_z=0.0,
+        )
+        self.latency_trace.record("navigation_publish_start", command_kind="stop")
+        self.active_publisher().publish(command)
+        self.latency_trace.record("navigation_publish_return", command_kind="stop")
         self.output_active = False
 
     def active_publisher(self):
@@ -579,7 +599,21 @@ class VisionTurnController(Node):
             limit = self.get_parameter("max_linear_speed").value
             remaining = distance - arrival_distance
             command.linear.x = max(0.0, min(limit, gain * remaining))
+        self.latency_trace.record(
+            "navigation_command_created",
+            command_kind="nonzero" if command.linear.x or command.angular.z else "stop",
+            linear_x=command.linear.x,
+            angular_z=command.angular.z,
+        )
+        self.latency_trace.record(
+            "navigation_publish_start",
+            command_kind="nonzero" if command.linear.x or command.angular.z else "stop",
+        )
         self.active_publisher().publish(command)
+        self.latency_trace.record(
+            "navigation_publish_return",
+            command_kind="nonzero" if command.linear.x or command.angular.z else "stop",
+        )
         self.output_active = True
 
 

@@ -1,0 +1,21 @@
+{
+  "pass": true,
+  "data_kind": "synthetic",
+  "real_uart_used": false,
+  "nonzero_drive_sent": false,
+  "automatic_stop_connected": false,
+  "navigation_connected": false,
+  "event_count": 22,
+  "events_observed": [
+    "arm_requested",
+    "command_without_encoder_change",
+    "drive_requested",
+    "encoder_baseline",
+    "encoder_update",
+    "measurement_stale",
+    "measurement_unavailable",
+    "stop_coast_observed",
+    "stop_requested",
+    "wheel_change_after_stop"
+  ]
+}

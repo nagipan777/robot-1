@@ -22,6 +22,8 @@ RUN apt-get update \
 COPY worlds/room.sdf /opt/create3_ws/install/irobot_create_gz_bringup/share/irobot_create_gz_bringup/worlds/room.sdf
 COPY worlds/room_camera.sdf /opt/create3_ws/install/irobot_create_gz_bringup/share/irobot_create_gz_bringup/worlds/room_camera.sdf
 COPY supervisord.conf /etc/supervisor/conf.d/create3.conf
+COPY supervisord.real_camera_aruco_minimal.conf /etc/supervisor/real-camera-aruco-minimal.conf
+COPY supervisord.real_camera_ai_dry_run.conf /etc/supervisor/real-camera-ai-dry-run.conf
 COPY start-simulation.sh /usr/local/bin/start-simulation
 COPY start-camera-bridge.sh /usr/local/bin/start-camera-bridge
 COPY start-camera-activation.sh /usr/local/bin/start-camera-activation
@@ -58,8 +60,12 @@ COPY dry_run_protocol.py /usr/local/bin/dry_run_protocol.py
 COPY pico_dry_run_transport.py /usr/local/bin/pico_dry_run_transport.py
 COPY pico_dry_run_bridge.py /usr/local/bin/pico-dry-run-bridge
 COPY differential_drive.py /usr/local/bin/differential_drive.py
+COPY latency_trace.py /usr/local/bin/latency_trace.py
 COPY roomba_tcp_transport.py /usr/local/bin/roomba_tcp_transport.py
 COPY roomba_bridge_tcp.py /usr/local/bin/roomba-bridge-tcp
+COPY deadline_ros_timer_dry_run.py /usr/local/bin/deadline-ros-timer-dry-run
+COPY roomba_latency_probe.py /usr/local/bin/roomba-latency-probe
+COPY navigation_latency_probe.py /usr/local/bin/navigation-latency-probe
 COPY roomba_wheel_lift_test.py /usr/local/bin/roomba-wheel-lift-test
 COPY roomba_wheel_lift_test_core.py /usr/local/bin/roomba_wheel_lift_test_core.py
 COPY aruco_pose_core.py /usr/local/bin/aruco_pose_core.py
@@ -68,6 +74,18 @@ COPY aruco_pose.yaml /etc/aruco-pose.yaml
 COPY localization_core.py /usr/local/bin/localization_core.py
 COPY wheel_odometry_node.py /usr/local/bin/wheel-odometry-node
 COPY wheel_odometry_node.py /usr/local/bin/wheel_odometry_node.py
+COPY roomba_odometry_observer.yaml /etc/roomba-odometry-observer.yaml
+COPY odometry_dryrun_core.py /usr/local/bin/odometry_dryrun_core.py
+COPY wheel_motion_monitor.py /usr/local/bin/wheel_motion_monitor.py
+COPY wheel_motion_monitor_node.py /usr/local/bin/wheel-motion-monitor
+COPY wheel_motion_monitor.yaml /etc/wheel-motion-monitor.yaml
+COPY run_wheel_monitor_dryrun.py /usr/local/bin/run-wheel-monitor-dryrun
+COPY odometry_replay_node.py /usr/local/bin/odometry-replay-node
+COPY odometry_aruco_ab.py /usr/local/bin/odometry-aruco-ab
+COPY run_odometry_dryrun.py /usr/local/bin/run-odometry-dryrun
+COPY roomba_odometry.rviz /etc/roomba-odometry.rviz
+COPY odometry_ros_e2e.py /usr/local/bin/odometry-ros-e2e
+COPY odometry_dryrun_e2e.csv /etc/odometry-dryrun-e2e.csv
 COPY localization_fusion_node.py /usr/local/bin/localization-fusion-node
 COPY localization_fusion_node.py /usr/local/bin/localization_fusion_node.py
 COPY localization_preview_test.py /usr/local/bin/localization-preview-test
@@ -80,6 +98,7 @@ COPY vision_controller.integration.yaml /etc/vision-controller.integration.yaml
 COPY vision_controller.real_dry_run.yaml /etc/vision-controller.real-dry-run.yaml
 COPY vision_controller.real_aruco_dry_run.yaml /etc/vision-controller.real-aruco-dry-run.yaml
 COPY e2e_dry_run_recorder.py /usr/local/bin/e2e-dry-run-recorder
+COPY ai_dry_run_gate_test.py /usr/local/bin/ai-dry-run-gate-test
 COPY dry_run_pose_publisher.py /usr/local/bin/dry-run-pose-publisher
 COPY add_litter_marker_display.py /tmp/add-litter-marker-display.py
 RUN chmod +x /usr/local/bin/start-simulation /usr/local/bin/webcam-bridge \
@@ -93,13 +112,20 @@ RUN chmod +x /usr/local/bin/start-simulation /usr/local/bin/webcam-bridge \
     /usr/local/bin/litter-model /usr/local/bin/start-vision-controller \
     /usr/local/bin/calibration-marker \
     /usr/local/bin/map-frame-adapter /usr/local/bin/vision-turn-controller \
+    /usr/local/bin/roomba-latency-probe \
+    /usr/local/bin/navigation-latency-probe \
     /usr/local/bin/unstamped-cmd-relay /usr/local/bin/roomba-dry-run-adapter \
     /usr/local/bin/cmd-vel-output-adapter \
     /usr/local/bin/pico-dry-run-bridge \
-    /usr/local/bin/e2e-dry-run-recorder \
+    /usr/local/bin/e2e-dry-run-recorder /usr/local/bin/ai-dry-run-gate-test \
     /usr/local/bin/dry-run-pose-publisher \
-    /usr/local/bin/roomba-bridge-tcp /usr/local/bin/roomba-wheel-lift-test \
+    /usr/local/bin/roomba-bridge-tcp /usr/local/bin/deadline-ros-timer-dry-run \
+    /usr/local/bin/roomba-wheel-lift-test \
     /usr/local/bin/aruco-pose-publisher /usr/local/bin/wheel-odometry-node \
+    /usr/local/bin/odometry-replay-node /usr/local/bin/wheel-motion-monitor \
+    /usr/local/bin/run-wheel-monitor-dryrun \
+    /usr/local/bin/odometry-aruco-ab /usr/local/bin/run-odometry-dryrun \
+    /usr/local/bin/odometry-ros-e2e \
     /usr/local/bin/localization-fusion-node /usr/local/bin/localization-preview-test \
     /usr/local/bin/recording-status /usr/local/bin/presentation-visualizer \
     && python3 /tmp/add-litter-marker-display.py \

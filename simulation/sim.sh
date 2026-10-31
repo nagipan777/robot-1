@@ -8,10 +8,20 @@ if [ "$(uname -m)" = arm64 ] && [ -x /opt/homebrew/bin/colima ]; then
 fi
 cd "$(dirname "$0")"
 compose=(docker --context colima-create3 compose -f compose.yaml)
+minimal_aruco_compose=(
+  docker --context colima-create3 compose
+  -f compose.yaml
+  -f compose.real_camera_aruco_minimal.yaml
+)
+ai_dry_run_compose=(
+  docker --context colima-create3 compose
+  -f compose.yaml
+  -f compose.real_camera_ai_dry_run.yaml
+)
 case "${1:-help}" in
   up)
     if ! colima -p create3 status >/dev/null 2>&1; then
-      colima start create3 --cpu 2 --memory 4 --disk 24 --vm-type vz \
+      colima -p create3 start --cpu 2 --memory 4 --disk 24 --vm-type vz \
         --mount none --activate=false --ssh-config=false
     fi
     SIM_WORLD=room "${compose[@]}" up -d --build
@@ -19,7 +29,7 @@ case "${1:-help}" in
     ;;
   camera-up)
     if ! colima -p create3 status >/dev/null 2>&1; then
-      colima start create3 --cpu 2 --memory 4 --disk 24 --vm-type vz \
+      colima -p create3 start --cpu 2 --memory 4 --disk 24 --vm-type vz \
         --mount none --activate=false --ssh-config=false
     fi
     SIM_WORLD=room_camera VISION_CONTROLLER_CONFIG=/etc/vision-controller.sim-camera.yaml \
@@ -33,7 +43,7 @@ case "${1:-help}" in
       "${compose[@]}" down
       colima -p create3 stop
     fi
-    colima start create3 --cpu 4 --memory 6 --disk 24 --vm-type vz \
+    colima -p create3 start --cpu 4 --memory 6 --disk 24 --vm-type vz \
       --mount none --activate=false --ssh-config=false
     SIM_WORLD=room_camera \
       VISION_CONTROLLER_CONFIG=/etc/vision-controller.integration.yaml \
@@ -60,7 +70,7 @@ case "${1:-help}" in
     dry_y="${4:-0.00}"
     dry_yaw="${5:-0.00}"
     if ! colima -p create3 status >/dev/null 2>&1; then
-      colima start create3 --cpu 4 --memory 6 --disk 24 --vm-type vz \
+      colima -p create3 start --cpu 4 --memory 6 --disk 24 --vm-type vz \
         --mount none --activate=false --ssh-config=false
     fi
     SIM_WORLD=room VISION_CONTROLLER_CONFIG=/etc/vision-controller.real-dry-run.yaml \
@@ -80,7 +90,7 @@ case "${1:-help}" in
       exit 2
     fi
     if ! colima -p create3 status >/dev/null 2>&1; then
-      colima start create3 --cpu 4 --memory 6 --disk 24 --vm-type vz \
+      colima -p create3 start --cpu 4 --memory 6 --disk 24 --vm-type vz \
         --mount none --activate=false --ssh-config=false
     fi
     SIM_WORLD=room \
@@ -92,12 +102,55 @@ case "${1:-help}" in
     echo 'Physical output remains disabled; only /roomba/cmd_vel_dry_run is published.'
     echo 'TCP 9000/9001 and the fixed dry-run pose publisher are not used.'
     ;;
+  real-camera-aruco-minimal-up)
+    if [ "$#" -ne 1 ]; then
+      echo "Usage: $0 real-camera-aruco-minimal-up" >&2
+      exit 2
+    fi
+    if ! colima -p create3 status >/dev/null 2>&1; then
+      colima -p create3 start --cpu 2 --memory 4 --disk 24 --vm-type vz \
+        --mount none --activate=false --ssh-config=false
+    fi
+    "${minimal_aruco_compose[@]}" up -d --build --force-recreate
+    echo 'Minimal real-camera ArUco bridge started.'
+    echo 'Only webcam-bridge and aruco-pose are configured; Create3/Gazebo/control/Pico are absent.'
+    echo 'Mac producer command:'
+    echo '.venv/bin/python vision.py --camera 0 --width 800 --height 600 --weights runs/detect/real_finetune/weights/best.pt --confidence 0.50 --imgsz 640 --aruco-marker-id 0 --aruco-dictionary DICT_4X4_50'
+    ;;
+  real-camera-aruco-minimal-status)
+    "${minimal_aruco_compose[@]}" exec -T simulator \
+      supervisorctl -c /etc/supervisor/real-camera-aruco-minimal.conf status
+    ;;
+  real-camera-aruco-minimal-down)
+    "${minimal_aruco_compose[@]}" down
+    ;;
+  real-camera-ai-dry-run-up)
+    if [ "$#" -ne 1 ]; then
+      echo "Usage: $0 real-camera-ai-dry-run-up" >&2
+      exit 2
+    fi
+    if ! colima -p create3 status >/dev/null 2>&1; then
+      colima -p create3 start --cpu 2 --memory 4 --disk 24 --vm-type vz \
+        --mount none --activate=false --ssh-config=false
+    fi
+    "${ai_dry_run_compose[@]}" up -d --build --force-recreate
+    echo 'Real-camera AI dry-run started.'
+    echo 'Only webcam, ArUco, controller, and dry-run adapter are configured.'
+    echo 'Gazebo/Create3/Pico/ARM and physical Roomba output are absent.'
+    ;;
+  real-camera-ai-dry-run-status)
+    "${ai_dry_run_compose[@]}" exec -T simulator \
+      supervisorctl -c /etc/supervisor/real-camera-ai-dry-run.conf status
+    ;;
+  real-camera-ai-dry-run-down)
+    "${ai_dry_run_compose[@]}" down
+    ;;
   nav-test-up)
     if colima -p create3 status >/dev/null 2>&1; then
       "${compose[@]}" down
       colima -p create3 stop
     fi
-    colima start create3 --cpu 4 --memory 6 --disk 24 --vm-type vz \
+    colima -p create3 start --cpu 4 --memory 6 --disk 24 --vm-type vz \
       --mount none --activate=false --ssh-config=false
     SIM_WORLD=room VISION_CONTROLLER_CONFIG=/etc/vision-controller.sim-camera.yaml \
       ROBOT_X=0.0 ROBOT_Y=-0.75 ROBOT_YAW=0.0 SPAWN_DOCK=false \
@@ -248,16 +301,159 @@ case "${1:-help}" in
       'source /opt/create3_ws/install/setup.bash; exec /usr/local/bin/roomba-bridge-tcp --ros-args -p host:="$1" -p port:="$2" -p drive_enabled:=false -p diagnostic_on_connect:=true -p watchdog_test_mode:=false -p command_topic:=/roomba/cmd_vel_unstamped' \
       -- "$host" "$port"
     ;;
-  roomba-short-e-bridge)
-    if [ "$#" -lt 3 ] || [ "$#" -gt 4 ] || [ "$3" != "WHEELS_LIFTED" ]; then
-      echo "Usage: $0 roomba-short-e-bridge PICO_IP WHEELS_LIFTED [PORT]" >&2
+  roomba-short-e-bridge|roomba-attended-floor-bridge)
+    if [ "$1" = "roomba-attended-floor-bridge" ]; then
+      bridge_confirmation="ATTENDED_FLOOR"
+    else
+      bridge_confirmation="WHEELS_LIFTED"
+    fi
+    if [ "$#" -lt 3 ] || [ "$#" -gt 4 ] || [ "$3" != "$bridge_confirmation" ]; then
+      echo "Usage: $0 $1 PICO_IP $bridge_confirmation [PORT]" >&2
       exit 2
     fi
     host="$2"
     port="${4:-9000}"
-    "${compose[@]}" exec simulator bash -lc \
-      'source /opt/create3_ws/install/setup.bash; exec /usr/local/bin/roomba-bridge-tcp --ros-args -p host:="$1" -p port:="$2" -p drive_enabled:=true -p diagnostic_on_connect:=true -p watchdog_test_mode:=false -p max_speed_mm_s:=20 -p command_timeout:=0.5 -p max_drive_session_duration:=0.4 -p command_topic:=/roomba/cmd_vel_unstamped' \
-      -- "$host" "$port"
+    short_e_owner="$$-$(date +%s)-${RANDOM}"
+    short_e_pid_file=/tmp/roomba-short-e-bridge.pid
+
+    cleanup_short_e_bridge() {
+      # docker compose exec can outlive the host shell when Ctrl+C is used
+      # through a pipe (for example, `... | tee bridge.log`).  Stop only the
+      # bridge owned by this invocation; never terminate another trial.
+      "${compose[@]}" exec -T simulator bash -lc '
+        pid_file="$1"
+        expected_owner="$2"
+        [ -r "$pid_file" ] || exit 0
+        read -r pid owner < "$pid_file" || exit 0
+        [ "$owner" = "$expected_owner" ] || exit 0
+        case "$pid" in ""|*[!0-9]*) exit 0 ;; esac
+        if kill -0 "$pid" 2>/dev/null &&
+           tr "\000" " " < "/proc/$pid/cmdline" | grep -q "/usr/local/bin/roomba-bridge-tcp"; then
+          kill -INT "$pid" 2>/dev/null || true
+          count=0
+          while kill -0 "$pid" 2>/dev/null && [ "$count" -lt 50 ]; do
+            sleep 0.1
+            count=$((count + 1))
+          done
+          if kill -0 "$pid" 2>/dev/null; then
+            kill -TERM "$pid" 2>/dev/null || true
+          fi
+        fi
+        current_owner=""
+        if [ -r "$pid_file" ]; then
+          read -r _ current_owner < "$pid_file" || true
+        fi
+        if [ "$current_owner" = "$expected_owner" ]; then
+          rm -f "$pid_file"
+        fi
+      ' -- "$short_e_pid_file" "$short_e_owner" >/dev/null 2>&1 || true
+    }
+
+    short_e_signal_status=0
+    short_e_exec_pid=""
+    short_e_launcher_pid=$$
+    keep_short_e_stdin_open() {
+      # Heartbeats form a lifecycle lease. If this host command is interrupted
+      # (including when stdout is piped through tee), heartbeats stop even if
+      # Docker leaves the exec stdin stream open.
+      while kill -0 "$short_e_launcher_pid" 2>/dev/null; do
+        printf '.\n' 2>/dev/null || return 0
+        sleep 0.2
+      done
+    }
+    interrupt_short_e_bridge() {
+      short_e_signal_status="$1"
+      if [ -n "$short_e_exec_pid" ] && kill -0 "$short_e_exec_pid" 2>/dev/null; then
+        kill -INT "$short_e_exec_pid" 2>/dev/null || true
+      fi
+      cleanup_short_e_bridge
+    }
+    trap 'interrupt_short_e_bridge 130' INT
+    trap 'interrupt_short_e_bridge 143' TERM
+    trap cleanup_short_e_bridge EXIT
+    set +e
+    keep_short_e_stdin_open | "${compose[@]}" exec -T simulator bash -lc '
+      source /opt/create3_ws/install/setup.bash
+      pid_file="$1"
+      owner="$2"
+      host="$3"
+      port="$4"
+      exec 9>/tmp/roomba-short-e-bridge.lock
+      if ! flock -n 9; then
+        echo "Refusing duplicate roomba-short-e-bridge: another instance is running" >&2
+        exit 73
+      fi
+      bridge_pid=""
+      stdin_monitor_pid=""
+      stop_bridge() {
+        if [ -n "$bridge_pid" ] && kill -0 "$bridge_pid" 2>/dev/null; then
+          kill -INT "$bridge_pid" 2>/dev/null || true
+          wait "$bridge_pid" 2>/dev/null || true
+        fi
+        if [ -n "$stdin_monitor_pid" ]; then
+          kill "$stdin_monitor_pid" 2>/dev/null || true
+          wait "$stdin_monitor_pid" 2>/dev/null || true
+        fi
+        rm -f "$pid_file"
+      }
+      trap stop_bridge EXIT INT TERM
+      /usr/local/bin/roomba-bridge-tcp --ros-args -p host:="$host" -p port:="$port" -p drive_enabled:=true -p diagnostic_on_connect:=true -p watchdog_test_mode:=false -p max_speed_mm_s:=20 -p command_timeout:=0.5 -p max_drive_session_duration:=0.4 -p command_topic:=/roomba/cmd_vel_unstamped &
+      bridge_pid=$!
+      printf "%s %s\n" "$bridge_pid" "$owner" > "$pid_file"
+      exec 8<&0
+      # Do not trust EOF alone: Docker may retain the exec stream after its
+      # client is interrupted. A missing heartbeat expires this wrapper.
+      (
+        heartbeat_count=0
+        heartbeat_timeouts=0
+        heartbeat_status=0
+        while true; do
+          if IFS= read -r -t 0.5 heartbeat; then
+            heartbeat_timeouts=0
+          else
+            heartbeat_status=$?
+            # EOF means the host-side exec is gone and must stop immediately.
+            # A single timed-read miss can occur under camera/AI load, so only
+            # expire the lifecycle lease after two consecutive 0.5 s misses.
+            if [ "$heartbeat_status" -eq 1 ]; then
+              break
+            fi
+            heartbeat_timeouts=$((heartbeat_timeouts + 1))
+            if [ "$heartbeat_timeouts" -ge 2 ]; then
+              break
+            fi
+            continue
+          fi
+          [ "$heartbeat" = "." ] || continue
+          heartbeat_count=$((heartbeat_count + 1))
+        done <&8
+        echo "short-E lifecycle heartbeat ended: read_status=$heartbeat_status received=$heartbeat_count" >&2
+        exit "$heartbeat_status"
+      ) &
+      stdin_monitor_pid=$!
+      set +e
+      wait -n "$bridge_pid" "$stdin_monitor_pid"
+      first_status=$?
+      set -e
+      if kill -0 "$bridge_pid" 2>/dev/null; then
+        # Host-side docker exec disappeared: make Python run its normal
+        # KeyboardInterrupt/finally STOP path before this wrapper exits.
+        kill -INT "$bridge_pid" 2>/dev/null || true
+        wait "$bridge_pid" 2>/dev/null || true
+        exit 130
+      fi
+      exit "$first_status"
+    ' -- "$short_e_pid_file" "$short_e_owner" "$host" "$port" &
+    short_e_exec_pid=$!
+    wait "$short_e_exec_pid"
+    short_e_status=$?
+    set -e
+    cleanup_short_e_bridge
+    trap - EXIT INT TERM
+    if [ "$short_e_signal_status" -ne 0 ]; then
+      exit "$short_e_signal_status"
+    fi
+    exit "$short_e_status"
     ;;
   roomba-tcp-watchdog)
     if [ "$#" -lt 3 ] || [ "$#" -gt 4 ] || [ "$3" != "WHEELS_LIFTED" ]; then
@@ -322,6 +518,57 @@ case "${1:-help}" in
   localization-preview-test)
     "${compose[@]}" exec -T simulator bash -lc \
       'source /opt/create3_ws/install/setup.bash; exec /usr/local/bin/localization-preview-test --ros-args --params-file /etc/localization-preview.yaml'
+    ;;
+  odometry-dryrun-e2e)
+    if [ "$#" -ne 1 ]; then
+      echo "Usage: $0 odometry-dryrun-e2e" >&2
+      exit 2
+    fi
+    if ! colima -p create3 status >/dev/null 2>&1; then
+      colima -p create3 start --cpu 2 --memory 4 --disk 24 --vm-type vz \
+        --mount none --activate=false --ssh-config=false
+    fi
+    image=robot-odometry-dryrun
+    artifact_dir="$(cd .. && pwd)/artifacts/odometry_dryrun/e2e"
+    container="robot-odometry-dryrun-e2e-$$"
+    mkdir -p "$artifact_dir"
+    docker --context colima-create3 build \
+      -f Dockerfile.odometry-dryrun -t "$image" .
+    docker --context colima-create3 create --name "$container" --network none \
+      "$image" bash -lc '
+        set -euo pipefail
+        set +u
+        source /opt/ros/jazzy/setup.bash
+        set -u
+        mkdir -p /output
+        odometry-ros-e2e \
+          --input /etc/odometry-dryrun-e2e.csv \
+          --output-csv /output/ros_odometry.csv \
+          --output-json /output/ros_e2e_summary.json
+        run-odometry-dryrun \
+          --input /etc/odometry-dryrun-e2e.csv \
+          --output-dir /output/offline
+      '
+    cleanup_odometry_dryrun() {
+      docker --context colima-create3 rm -f "$container" >/dev/null 2>&1 || true
+    }
+    trap cleanup_odometry_dryrun EXIT INT TERM
+    docker --context colima-create3 start -a "$container"
+    docker --context colima-create3 cp "$container:/output/." "$artifact_dir"
+    cleanup_odometry_dryrun
+    trap - EXIT INT TERM
+    echo "PASS: odometry dry-run E2E artifacts saved to $artifact_dir"
+    ;;
+  wheel-monitor-dryrun)
+    if [ "$#" -ne 1 ]; then
+      echo "Usage: $0 wheel-monitor-dryrun" >&2
+      exit 2
+    fi
+    artifact_dir="$(cd .. && pwd)/artifacts/wheel_motion_monitor/dryrun"
+    mkdir -p "$artifact_dir"
+    PYTHONPATH=. ../.venv/bin/python run_wheel_monitor_dryrun.py \
+      --output "$artifact_dir"
+    echo "PASS: wheel monitor dry-run artifacts saved to $artifact_dir"
     ;;
   localization-hardware-live)
     echo 'Refusing hardware-live localization: UART/TCP 9000 is intentionally not implemented in this phase.' >&2
@@ -579,6 +826,6 @@ case "${1:-help}" in
     "${compose[@]}" cp simulator:/tmp/oscillation_summary.json ../artifacts/oscillation_diagnostics/summary.json
     ;;
   *)
-    echo "Usage: $0 {up|camera-up|vision-integration-up|real-camera-dry-run-up [PICO_IP [X Y YAW]]|real-camera-aruco-dry-run-up|nav-test-up|down|stop|shell|status|cmd-adapter [dry_run|gazebo|roomba] [INPUT_TOPIC]|pico-cmd-dry-run PICO_IP [PORT]|e2e-record {A|B|C|D|E} [SECONDS]|dry-run-pose X Y YAW|camera-status|litter-add X Y|litter-move X Y|litter-remove|logs|teleop|roomba-tcp PICO_IP [PORT]|roomba-tcp-diagnostic PICO_IP [PORT]|roomba-short-e-bridge PICO_IP WHEELS_LIFTED [PORT]|roomba-tcp-watchdog PICO_IP WHEELS_LIFTED [PORT]|roomba-wheel-lift-test MODE [WHEELS_LIFTED]|aruco-pose|aruco-pose-start|aruco-pose-stop|localization-wheel-preview|localization-fusion-preview|localization-preview-test|localization-hardware-live|test-marker|record-status|presentation-layout|replay-create3-trajectory [RESULT_JSON [SPEED]]|ros-status|control-turn|control-approach|control-off|known-target-test|known-target-abort-test|multi-target-test|synthetic-coordinate-test|yolo-navigation-test|oscillation-diagnostics [SECONDS]}"
+    echo "Usage: $0 {up|camera-up|vision-integration-up|real-camera-dry-run-up [PICO_IP [X Y YAW]]|real-camera-aruco-dry-run-up|real-camera-aruco-minimal-up|real-camera-aruco-minimal-status|real-camera-aruco-minimal-down|real-camera-ai-dry-run-up|real-camera-ai-dry-run-status|real-camera-ai-dry-run-down|nav-test-up|down|stop|shell|status|cmd-adapter [dry_run|gazebo|roomba] [INPUT_TOPIC]|pico-cmd-dry-run PICO_IP [PORT]|e2e-record {A|B|C|D|E} [SECONDS]|dry-run-pose X Y YAW|camera-status|litter-add X Y|litter-move X Y|litter-remove|logs|teleop|roomba-tcp PICO_IP [PORT]|roomba-tcp-diagnostic PICO_IP [PORT]|roomba-short-e-bridge PICO_IP WHEELS_LIFTED [PORT]|roomba-attended-floor-bridge PICO_IP ATTENDED_FLOOR [PORT]|roomba-tcp-watchdog PICO_IP WHEELS_LIFTED [PORT]|roomba-wheel-lift-test MODE [WHEELS_LIFTED]|aruco-pose|aruco-pose-start|aruco-pose-stop|localization-wheel-preview|localization-fusion-preview|localization-preview-test|localization-hardware-live|odometry-dryrun-e2e|wheel-monitor-dryrun|test-marker|record-status|presentation-layout|replay-create3-trajectory [RESULT_JSON [SPEED]]|ros-status|control-turn|control-approach|control-off|known-target-test|known-target-abort-test|multi-target-test|synthetic-coordinate-test|yolo-navigation-test|oscillation-diagnostics [SECONDS]}"
     ;;
 esac

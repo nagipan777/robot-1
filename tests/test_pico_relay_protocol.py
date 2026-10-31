@@ -10,6 +10,7 @@ from unittest import mock
 
 
 SOURCE = pathlib.Path(__file__).resolve().parents[1] / "pico" / "pico_relay.py"
+DEPLOYED_SOURCE = pathlib.Path(__file__).resolve().parents[1] / "pico" / "main.py"
 
 
 class FakeUart:
@@ -65,6 +66,46 @@ class TemporarilyBlockedConnection(FakeConnection):
         return super().send(data)
 
 
+class NoneThenWritableConnection(FakeConnection):
+    def __init__(self, none_sends):
+        super().__init__()
+        self.none_sends = none_sends
+
+    def send(self, data):
+        if self.none_sends:
+            self.none_sends -= 1
+            return None
+        return super().send(data)
+
+
+class DisconnectAfterConnection(FakeConnection):
+    def __init__(self, successful_sends):
+        super().__init__(max_send=1)
+        self.successful_sends = successful_sends
+
+    def send(self, data):
+        if self.successful_sends == 0:
+            raise OSError(errno.ECONNRESET)
+        self.successful_sends -= 1
+        return super().send(data)
+
+
+class IdleClientConnection(FakeConnection):
+    def __init__(self):
+        super().__init__()
+        self.blocking = True
+        self.closed = False
+
+    def setblocking(self, value):
+        self.blocking = value
+
+    def recv(self, _size):
+        raise OSError(errno.EAGAIN)
+
+    def close(self):
+        self.closed = True
+
+
 class FakeTime:
     def __init__(self):
         self.now = 0
@@ -89,13 +130,13 @@ def load_relay():
         OUT = 1
 
         def __init__(self, *_args, **_kwargs):
-            pass
+            self.transitions = []
 
         def on(self):
-            pass
+            self.transitions.append(1)
 
         def off(self):
-            pass
+            self.transitions.append(0)
 
     machine = types.ModuleType("machine")
     machine.Pin = FakePin
@@ -124,6 +165,16 @@ def load_relay():
 
 
 class PicoRelayProtocolTests(unittest.TestCase):
+    def test_deployed_and_repository_relay_match_except_deployment_comment(self):
+        ignored_comment = "# Set these only on the deployed Pico W. Never commit Wi-Fi credentials."
+
+        def normalized(path):
+            return "\n".join(
+                line for line in path.read_text().splitlines() if line != ignored_comment
+            )
+
+        self.assertEqual(normalized(DEPLOYED_SOURCE), normalized(SOURCE))
+
     def test_uart_write_exact_requires_the_complete_return_count(self):
         frame = b"\x91\x00\x14\x00\x14"
         for result, expected in ((5, True), (4, False), (0, False), (None, False)):
@@ -136,6 +187,14 @@ class PicoRelayProtocolTests(unittest.TestCase):
     def test_nonblocking_tcp_send_retries_eagain_without_losing_ack(self):
         relay, _uart = load_relay()
         connection = TemporarilyBlockedConnection(blocked_sends=2)
+
+        relay.send_all(connection, b"ack")
+
+        self.assertEqual(bytes(connection.sent), b"ack")
+
+    def test_nonblocking_tcp_send_retries_none_without_losing_ack(self):
+        relay, _uart = load_relay()
+        connection = NoneThenWritableConnection(none_sends=2)
 
         relay.send_all(connection, b"ack")
 
@@ -154,6 +213,41 @@ class PicoRelayProtocolTests(unittest.TestCase):
         # Initialization itself must remain available for STOP diagnostics;
         # query_uart still rejects unsynchronized sensor responses separately.
         self.assertIsNone(relay.roomba_init())
+
+    def test_brc_wake_is_disabled_by_default(self):
+        relay, _uart = load_relay()
+
+        relay.roomba_init()
+
+        self.assertEqual(relay.brc.transitions, [])
+        self.assertFalse(relay.brc_wake_sent)
+
+    def test_runtime_status_is_best_effort_and_contains_no_credentials(self):
+        relay, _uart = load_relay()
+        output = io.StringIO()
+
+        with redirect_stdout(output):
+            relay.log_runtime_status()
+
+        logged = output.getvalue()
+        self.assertIn("WIFI_STATUS", logged)
+        self.assertIn("firmware=", logged)
+        self.assertIn("mem_free=", logged)
+        self.assertIn("rssi=", logged)
+        if relay.SSID:
+            self.assertNotIn(relay.SSID, logged)
+        if relay.PASSWORD:
+            self.assertNotIn(relay.PASSWORD, logged)
+
+    def test_enabled_brc_wake_pulses_only_once_per_boot(self):
+        relay, _uart = load_relay()
+        relay.BRC_WAKE_ENABLED = True
+
+        relay.roomba_init()
+        relay.roomba_init()
+
+        self.assertEqual(relay.brc.transitions, [0, 1])
+        self.assertTrue(relay.brc_wake_sent)
 
     def test_oi_mode_safe_and_other_defined_modes(self):
         for mode in range(4):
@@ -214,6 +308,61 @@ class PicoRelayProtocolTests(unittest.TestCase):
             ),
         )
 
+    def test_live_uart_wait_is_interrupted_by_drive_session_deadline(self):
+        relay, uart = load_relay()
+        relay.ALLOW_NONZERO_DRIVE = True
+        connection = FakeConnection()
+        relay.forward_valid_frames(bytearray(self.arm_frame(relay, 90)), connection)
+        relay.forward_valid_frames(
+            bytearray(self.drive_frame(relay, 90, sequence=1)), connection
+        )
+        started_at = relay.motion_latch.drive_started_at_ms
+        uart.writes.clear()
+
+        response = relay.query_uart(
+            bytes([relay.SENSORS, relay.SENSOR_OI_MODE]), 1
+        )
+
+        self.assertEqual(response, b"")
+        self.assertEqual(relay.motion_latch.state, relay.MotionLatch.LATCHED_STOP)
+        self.assertIn(relay.STOP, uart.writes)
+        self.assertLess(
+            relay.time.now - started_at,
+            relay.UART_DIAGNOSTIC_TIMEOUT_MS,
+        )
+
+    def test_idle_uart_wait_keeps_existing_diagnostic_timeout(self):
+        relay, uart = load_relay()
+        query = bytes([relay.SENSORS, relay.SENSOR_OI_MODE])
+        started_at = relay.time.now
+
+        response = relay.query_uart(query, 1)
+
+        self.assertEqual(response, b"")
+        self.assertEqual(relay.motion_latch.state, relay.MotionLatch.STOPPED)
+        self.assertNotIn(relay.STOP, uart.writes)
+        self.assertGreaterEqual(
+            relay.time.now - started_at,
+            relay.UART_DIAGNOSTIC_TIMEOUT_MS,
+        )
+
+    def test_live_uart_wait_with_complete_response_keeps_arm_and_payload(self):
+        relay, uart = load_relay()
+        relay.ALLOW_NONZERO_DRIVE = True
+        query = bytes([relay.SENSORS, relay.SENSOR_OI_MODE])
+        uart.responses[query] = b"\x02"
+        connection = FakeConnection()
+        relay.forward_valid_frames(bytearray(self.arm_frame(relay, 91)), connection)
+        relay.forward_valid_frames(
+            bytearray(self.drive_frame(relay, 91, sequence=1)), connection
+        )
+
+        response = relay.query_uart(query, 1)
+
+        self.assertEqual(response, b"\x02")
+        self.assertEqual(relay.motion_latch.state, relay.MotionLatch.ARMED)
+        self.assertNotIn(relay.STOP, uart.writes)
+
     def test_stop_ack_reports_uart_and_robot_zero(self):
         relay, uart = load_relay()
         query = bytes(
@@ -236,6 +385,67 @@ class PicoRelayProtocolTests(unittest.TestCase):
             + b"\x00\x00\x00\x00",
         )
         self.assertEqual(uart.writes[:3], [relay.STOP, relay.PAUSE_STREAM, query])
+
+    def test_diagnostic_stop_revokes_arm_until_newer_generation_rearms(self):
+        relay, uart = load_relay()
+        relay.ALLOW_NONZERO_DRIVE = True
+        stop_query = bytes(
+            [
+                relay.QUERY_LIST,
+                2,
+                relay.SENSOR_REQUESTED_RIGHT_VELOCITY,
+                relay.SENSOR_REQUESTED_LEFT_VELOCITY,
+            ]
+        )
+        uart.responses[stop_query] = b"\x00\x00\x00\x00"
+        connection = FakeConnection()
+
+        relay.forward_valid_frames(bytearray(self.arm_frame(relay, 70)), connection)
+        relay.forward_valid_frames(
+            bytearray(self.drive_frame(relay, 70, sequence=1)), connection
+        )
+        relay.forward_valid_frames(
+            bytearray([relay.DIAGNOSTIC_MAGIC, relay.DIAGNOSTIC_STOP]), connection
+        )
+        writes_after_stop = len(uart.writes)
+        relay.forward_valid_frames(
+            bytearray(self.drive_frame(relay, 70, sequence=2)), connection
+        )
+
+        self.assertEqual(relay.motion_latch.state, relay.MotionLatch.STOPPED)
+        self.assertEqual(len(uart.writes), writes_after_stop)
+        self.assertEqual(connection.sent[-11], relay.DRIVE_ACK_VALIDATED)
+
+        relay.forward_valid_frames(bytearray(self.arm_frame(relay, 71)), connection)
+        relay.forward_valid_frames(
+            bytearray(self.drive_frame(relay, 71, sequence=1)), connection
+        )
+        self.assertEqual(relay.motion_latch.state, relay.MotionLatch.ARMED)
+        self.assertEqual(uart.writes[-1], bytes([145, 0, 20, 0, 20]))
+
+    def test_stop_first_oi_diagnostic_revokes_arm_but_live_query_does_not(self):
+        relay, uart = load_relay()
+        relay.ALLOW_NONZERO_DRIVE = True
+        oi_query = bytes([relay.SENSORS, relay.SENSOR_OI_MODE])
+        uart.responses[oi_query] = b"\x02"
+        connection = FakeConnection()
+        relay.forward_valid_frames(bytearray(self.arm_frame(relay, 80)), connection)
+        relay.forward_valid_frames(
+            bytearray(self.drive_frame(relay, 80, sequence=1)), connection
+        )
+
+        relay.forward_valid_frames(
+            bytearray([relay.DIAGNOSTIC_MAGIC, relay.DIAGNOSTIC_OI_MODE_LIVE]),
+            connection,
+        )
+        self.assertEqual(relay.motion_latch.state, relay.MotionLatch.ARMED)
+        self.assertEqual(relay.motion_latch.generation, 80)
+
+        relay.forward_valid_frames(
+            bytearray([relay.DIAGNOSTIC_MAGIC, relay.DIAGNOSTIC_OI_MODE]), connection
+        )
+        self.assertEqual(relay.motion_latch.state, relay.MotionLatch.STOPPED)
+        self.assertIsNone(relay.motion_latch.generation)
 
     def test_stop_diagnostic_discards_stale_uart_bytes_before_query(self):
         relay, uart = load_relay()
@@ -281,6 +491,19 @@ class PicoRelayProtocolTests(unittest.TestCase):
         self.assertEqual(uart.writes, [relay.STOP, relay.PAUSE_STREAM])
         self.assertIn("UART diagnostic sync failed", output.getvalue())
         self.assertIn("command=95 02 29 2a", output.getvalue())
+
+    def test_uart_drain_timeout_reports_bounded_discard_diagnostics(self):
+        relay, uart = load_relay()
+        uart.any = lambda: 1
+        uart.read = lambda _size: b"\xaa"
+
+        output = io.StringIO()
+        with redirect_stdout(output):
+            quiet = relay.drain_uart_until_quiet(quiet_ms=10, timeout_ms=100)
+
+        self.assertFalse(quiet)
+        self.assertRegex(output.getvalue(), r"discarded_count=[1-9][0-9]*")
+        self.assertIn("tail=" + " ".join(["aa"] * 16), output.getvalue())
 
     def test_partial_stop_sensor_response_logs_raw_bytes_and_keeps_gate_closed(self):
         relay, uart = load_relay()
@@ -444,7 +667,195 @@ class PicoRelayProtocolTests(unittest.TestCase):
         self.assertEqual(activity, 1)
         self.assertEqual(uart.writes, [b"\x91\x00\x14\x00\x14"])
         self.assertIn("ARM rejected: stale generation=20", output.getvalue())
-        self.assertIn("ARM accepted: generation=21", output.getvalue())
+        self.assertIn("ARM reserved: generation=21", output.getvalue())
+        self.assertIn("ARM committed: generation=21", output.getvalue())
+
+    def test_arm_commits_only_after_complete_ack_send(self):
+        relay, _uart = load_relay()
+        relay.ALLOW_NONZERO_DRIVE = True
+
+        class ObservingConnection(FakeConnection):
+            def send(self, data):
+                self.state_during_send = relay.motion_latch.state
+                return super().send(data)
+
+        connection = ObservingConnection()
+        relay.forward_valid_frames(
+            bytearray(self.arm_frame(relay, 51)), connection
+        )
+
+        self.assertEqual(
+            connection.state_during_send, relay.MotionLatch.ARM_PENDING
+        )
+        self.assertEqual(relay.motion_latch.state, relay.MotionLatch.ARMED)
+        self.assertEqual(bytes(connection.sent)[:3], b"\xd7\x84\x01")
+
+    def test_arm_ack_all_partial_boundaries_complete_before_commit(self):
+        for first_send_size in range(1, 7):
+            with self.subTest(first_send_size=first_send_size):
+                relay, _uart = load_relay()
+                relay.ALLOW_NONZERO_DRIVE = True
+                connection = FakeConnection(max_send=first_send_size)
+                output = io.StringIO()
+                with redirect_stdout(output):
+                    relay.forward_valid_frames(
+                        bytearray(self.arm_frame(relay, 60)), connection, 11
+                    )
+                self.assertEqual(len(connection.sent), 7)
+                self.assertEqual(relay.motion_latch.state, relay.MotionLatch.ARMED)
+                self.assertEqual(relay.motion_latch.connection_id, 11)
+                self.assertIn("ACK_TX_PARTIAL", output.getvalue())
+
+    def test_disconnect_during_ack_latches_stop_without_commit(self):
+        relay, uart = load_relay()
+        relay.ALLOW_NONZERO_DRIVE = True
+        connection = DisconnectAfterConnection(successful_sends=3)
+
+        with self.assertRaises(OSError):
+            relay.forward_valid_frames(
+                bytearray(self.arm_frame(relay, 61)), connection, 12
+            )
+
+        self.assertEqual(relay.motion_latch.state, relay.MotionLatch.LATCHED_STOP)
+        self.assertIsNone(relay.motion_latch.connection_id)
+        self.assertEqual(uart.writes[-1], relay.STOP)
+
+    def test_arm_pending_expiry_during_ack_prevents_commit(self):
+        relay, uart = load_relay()
+        relay.ALLOW_NONZERO_DRIVE = True
+
+        class DelayedAckConnection(FakeConnection):
+            def send(self, data):
+                relay.time.now += relay.COMMAND_TIMEOUT_MS
+                return super().send(data)
+
+        with self.assertRaisesRegex(OSError, "ARM commit failed after ACK"):
+            relay.forward_valid_frames(
+                bytearray(self.arm_frame(relay, 63)), DelayedAckConnection(), 13
+            )
+
+        self.assertEqual(relay.motion_latch.state, relay.MotionLatch.LATCHED_STOP)
+        self.assertIsNone(relay.motion_latch.pending_generation)
+        self.assertIsNone(relay.motion_latch.pending_at_ms)
+        self.assertEqual(uart.writes[-1], relay.STOP)
+
+    def test_old_connection_id_cannot_drive_new_session(self):
+        relay, uart = load_relay()
+        relay.ALLOW_NONZERO_DRIVE = True
+        connection = FakeConnection()
+        relay.forward_valid_frames(
+            bytearray(self.arm_frame(relay, 62)), connection, 20
+        )
+
+        _remaining, forwarded = relay.forward_valid_frames(
+            bytearray(self.drive_frame(relay, 62)), connection, 21
+        )
+
+        self.assertEqual(forwarded, 0)
+        self.assertEqual(uart.writes, [])
+        self.assertEqual(connection.sent[-13 + 2], relay.DRIVE_ACK_VALIDATED)
+
+    def test_stop_during_arm_ack_prevents_commit(self):
+        relay, uart = load_relay()
+        relay.ALLOW_NONZERO_DRIVE = True
+
+        class StopDuringSendConnection(FakeConnection):
+            def send(self, data):
+                relay.motion_latch.latch_stop()
+                return super().send(data)
+
+        with self.assertRaisesRegex(OSError, "ARM commit failed after ACK"):
+            relay.forward_valid_frames(
+                bytearray(self.arm_frame(relay, 54)), StopDuringSendConnection()
+            )
+
+        self.assertEqual(relay.motion_latch.state, relay.MotionLatch.LATCHED_STOP)
+        self.assertEqual(relay.motion_latch.highest_generation, 54)
+        self.assertIsNone(relay.motion_latch.generation)
+        self.assertEqual(uart.writes[-1], relay.STOP)
+
+    def test_arm_ack_send_failure_latches_stop_and_burns_generation(self):
+        relay, uart = load_relay()
+        relay.ALLOW_NONZERO_DRIVE = True
+        connection = NoneThenWritableConnection(none_sends=1000)
+
+        with self.assertRaisesRegex(OSError, "TCP send timed out"):
+            relay.forward_valid_frames(
+                bytearray(self.arm_frame(relay, 52)), connection
+            )
+
+        self.assertEqual(relay.motion_latch.state, relay.MotionLatch.LATCHED_STOP)
+        self.assertEqual(relay.motion_latch.highest_generation, 52)
+        self.assertIsNone(relay.motion_latch.generation)
+        self.assertEqual(uart.writes[-1], relay.STOP)
+
+        retry = FakeConnection()
+        relay.forward_valid_frames(bytearray(self.arm_frame(relay, 52)), retry)
+        self.assertEqual(retry.sent[2], relay.ARM_REJECTED_GENERATION)
+
+    def test_arm_without_first_drive_expires_at_existing_500ms_limit(self):
+        relay, uart = load_relay()
+        relay.ALLOW_NONZERO_DRIVE = True
+        relay.forward_valid_frames(
+            bytearray(self.arm_frame(relay, 53)), FakeConnection()
+        )
+        armed_at = relay.motion_latch.armed_at_ms
+        relay.time.now = armed_at + relay.COMMAND_TIMEOUT_MS
+
+        self.assertTrue(relay.enforce_arm_watchdog())
+        self.assertEqual(relay.motion_latch.state, relay.MotionLatch.LATCHED_STOP)
+        self.assertEqual(uart.writes[-1], relay.STOP)
+
+    def test_arm_expiry_boundary_is_499_false_and_500_true(self):
+        relay, _uart = load_relay()
+        relay.motion_latch.state = relay.MotionLatch.ARMED
+        relay.motion_latch.armed_at_ms = 1000
+
+        self.assertFalse(relay.motion_latch.arm_expired(1499))
+        self.assertTrue(relay.motion_latch.arm_expired(1500))
+
+    def test_arm_expiry_uses_wrap_safe_ticks_diff(self):
+        relay, _uart = load_relay()
+        period = 1 << 30
+        relay.time.ticks_diff = lambda current, previous: (
+            (current - previous + period // 2) % period - period // 2
+        )
+        relay.motion_latch.state = relay.MotionLatch.ARMED
+        relay.motion_latch.armed_at_ms = period - 200
+
+        self.assertFalse(relay.motion_latch.arm_expired(299))
+        self.assertTrue(relay.motion_latch.arm_expired(300))
+
+    def test_idle_client_is_closed_after_first_frame_deadline_with_stop_latched(self):
+        relay, uart = load_relay()
+        connection = IdleClientConnection()
+        output = io.StringIO()
+
+        with redirect_stdout(output):
+            relay.receive_client(connection, ("127.0.0.1", 12345))
+
+        self.assertTrue(connection.closed)
+        self.assertEqual(relay.motion_latch.state, relay.MotionLatch.LATCHED_STOP)
+        self.assertEqual(uart.writes[-1], relay.STOP)
+        self.assertIn("TCP_ACCEPT", output.getvalue())
+        self.assertIn("READY_TX_OK", output.getvalue())
+        self.assertIn("STOP_LATCHED", output.getvalue())
+        self.assertIn("TCP_CLOSE", output.getvalue())
+        self.assertIn("reason=first frame timeout", output.getvalue())
+
+    def test_next_idle_client_is_logged_as_reconnect_and_also_released(self):
+        relay, _uart = load_relay()
+        first = IdleClientConnection()
+        second = IdleClientConnection()
+        relay.receive_client(first, ("127.0.0.1", 10001))
+        output = io.StringIO()
+
+        with redirect_stdout(output):
+            relay.receive_client(second, ("127.0.0.1", 10002))
+
+        self.assertTrue(second.closed)
+        self.assertIn("TCP_RECONNECT", output.getvalue())
+        self.assertIn("connection_id=2", output.getvalue())
 
     def test_sequence_replay_and_bad_crc_are_rejected_without_uart_write(self):
         relay, uart = load_relay()
@@ -523,6 +934,46 @@ class PicoRelayProtocolTests(unittest.TestCase):
         self.assertIn("watchdog STOP: fired_at_ms=", output.getvalue())
         self.assertIn("elapsed_ms=", output.getvalue())
         self.assertIn("uart_written=True", output.getvalue())
+
+    def test_independent_drive_session_deadline_stops_and_latches(self):
+        relay, uart = load_relay()
+        relay.ALLOW_NONZERO_DRIVE = True
+        connection = FakeConnection()
+        relay.forward_valid_frames(bytearray(self.arm_frame(relay, 81)), connection)
+        relay.forward_valid_frames(
+            bytearray(self.drive_frame(relay, 81, sequence=1)), connection
+        )
+        started_at = relay.motion_latch.drive_started_at_ms
+        relay.time.now = started_at + relay.DRIVE_SESSION_TIMEOUT_MS
+
+        output = io.StringIO()
+        with redirect_stdout(output):
+            stopped = relay.enforce_drive_session_deadline(False)
+
+        self.assertTrue(stopped)
+        self.assertEqual(relay.motion_latch.state, relay.MotionLatch.LATCHED_STOP)
+        self.assertEqual(uart.writes[-1], relay.STOP)
+        self.assertIn("session deadline detected", output.getvalue())
+        self.assertIn("UART STOP complete", output.getvalue())
+
+    def test_expired_pico_session_rejects_next_drive_before_uart(self):
+        relay, uart = load_relay()
+        relay.ALLOW_NONZERO_DRIVE = True
+        connection = FakeConnection()
+        relay.forward_valid_frames(bytearray(self.arm_frame(relay, 82)), connection)
+        relay.forward_valid_frames(
+            bytearray(self.drive_frame(relay, 82, sequence=1)), connection
+        )
+        writes_before = list(uart.writes)
+        relay.time.now = (
+            relay.motion_latch.drive_started_at_ms
+            + relay.DRIVE_SESSION_TIMEOUT_MS
+        )
+        _remaining, forwarded = relay.forward_valid_frames(
+            bytearray(self.drive_frame(relay, 82, sequence=2)), connection
+        )
+        self.assertEqual(forwarded, 0)
+        self.assertEqual(uart.writes, writes_before)
 
 
 if __name__ == "__main__":

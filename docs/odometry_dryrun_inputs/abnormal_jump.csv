@@ -1,0 +1,4 @@
+timestamp,left_encoder,right_encoder,valid,communication_state,sequence,error
+1.0,1000,1000,true,connected,1,
+1.2,1010,1010,true,connected,2,
+1.4,9000,1015,true,connected,3,
