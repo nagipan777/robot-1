@@ -231,7 +231,8 @@ class RoombaBridgeTcpIntegrationTests(unittest.TestCase):
         self.assertIn('ROS_LOG_DIR="$session_dir/ros"', case)
         self.assertIn('latency_trace_path:="$session_dir/latency.jsonl"', case)
         self.assertIn("Unified trial session logs saved", case)
-        self.assertEqual(case.count("/usr/local/bin/roomba-bridge-tcp --ros-args"), 1)
+        self.assertEqual(case.count("/usr/local/bin/roomba-bridge-tcp --ros-args"), 2)
+        self.assertIn('if [ "$continuous_mode" = true ]', case)
         self.assertIn("-p diagnostic_on_connect:=true", case)
         self.assertIn("-p max_speed_mm_s:=20", case)
         self.assertIn("-p max_drive_session_duration:=0.4", case)
@@ -243,6 +244,34 @@ class RoombaBridgeTcpIntegrationTests(unittest.TestCase):
         self.assertIn("self.expire_bounded_drive()", source)
         self.assertIn("bounded drive deadline detected: STOP send starts next", source)
         self.assertIn("bounded Drive ACK: status=0x03", source)
+
+    def test_bridge_publishes_only_validated_matching_arm_acceptance(self):
+        source = (ROOT / "simulation" / "roomba_bridge_tcp.py").read_text()
+        start = source.index("    def on_arm")
+        method = source[start : source.index("    def tick", start)]
+        self.assertIn("self.transport.arm(generation)", method)
+        self.assertIn("self.arm_accepted_publisher.publish(accepted)", method)
+        self.assertLess(
+            method.index("self.transport.arm(generation)"),
+            method.index("self.arm_accepted_publisher.publish(accepted)"),
+        )
+
+    def test_continuous_trial_launcher_is_staged_and_explicit(self):
+        sim_script = (ROOT / "simulation" / "sim.sh").read_text()
+        start = sim_script.index("  roomba-short-e-bridge|")
+        case = sim_script[start : sim_script.index("  roomba-tcp-watchdog)", start)]
+        self.assertIn("roomba-continuous-trial-session", case)
+        self.assertIn('bridge_confirmation="CONTINUOUS_ATTENDED_FLOOR"', case)
+        self.assertIn("1.0|2.0|3.0|5.0", case)
+        self.assertIn("continuous_drive_test_mode:=true", case)
+        self.assertIn('max_drive_session_duration:="$bridge_duration"', case)
+        publisher_start = sim_script.index("  roomba-continuous-straight-test)")
+        publisher = sim_script[
+            publisher_start : sim_script.index("  aruco-pose)", publisher_start)
+        ]
+        self.assertIn("mode:=continuous_straight", publisher)
+        self.assertIn("publish_period_s:=0.1", publisher)
+        self.assertIn('2.0) command_duration="1.9"', publisher)
 
     def test_continuous_mode_is_separate_explicit_and_bounded(self):
         source = (ROOT / "simulation" / "roomba_bridge_tcp.py").read_text()

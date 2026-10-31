@@ -5,9 +5,11 @@ import math
 
 MAX_WHEEL_SPEED_MM_S = 20
 MAX_DRIVE_DURATION_S = 1.0
+MAX_CONTINUOUS_DRIVE_DURATION_S = 5.0
 WATCHDOG_SILENCE_S = 0.75
 ROTATION_CONFIRMATION = "WHEELS_LIFTED"
 ATTENDED_FLOOR_CONFIRMATION = "ATTENDED_FLOOR_CLEARED"
+CONTINUOUS_CONFIRMATION = "CONTINUOUS_ATTENDED_FLOOR"
 DEFAULT_SUBSCRIBER_WAIT_TIMEOUT_S = 5.0
 
 
@@ -33,7 +35,14 @@ class SubscriberConnectionGate:
 
 
 class WheelLiftTestProfile:
-    MODES = ("stop", "rejection", "rotate", "watchdog", "floor_straight")
+    MODES = (
+        "stop",
+        "rejection",
+        "rotate",
+        "watchdog",
+        "floor_straight",
+        "continuous_straight",
+    )
 
     def __init__(
         self,
@@ -60,16 +69,27 @@ class WheelLiftTestProfile:
             raise ValueError("left_mm_s exceeds 20 mm/s")
         if abs(right_mm_s) > MAX_WHEEL_SPEED_MM_S:
             raise ValueError("right_mm_s exceeds 20 mm/s")
-        if not 0.0 < drive_duration_s <= MAX_DRIVE_DURATION_S:
-            raise ValueError("drive_duration_s must be > 0 and <= 1.0")
+        max_duration_s = (
+            MAX_CONTINUOUS_DRIVE_DURATION_S
+            if mode == "continuous_straight"
+            else MAX_DRIVE_DURATION_S
+        )
+        if not 0.0 < drive_duration_s <= max_duration_s:
+            raise ValueError(
+                "drive_duration_s must be > 0 and <= {:.1f}".format(max_duration_s)
+            )
         if wheel_base_m <= 0.0:
             raise ValueError("wheel_base_m must be positive")
-        required_confirmation = (
-            ATTENDED_FLOOR_CONFIRMATION
-            if mode == "floor_straight"
-            else ROTATION_CONFIRMATION
-        )
-        if mode in ("rotate", "watchdog", "floor_straight") and not (
+        required_confirmation = {
+            "floor_straight": ATTENDED_FLOOR_CONFIRMATION,
+            "continuous_straight": CONTINUOUS_CONFIRMATION,
+        }.get(mode, ROTATION_CONFIRMATION)
+        if mode in (
+            "rotate",
+            "watchdog",
+            "floor_straight",
+            "continuous_straight",
+        ) and not (
             allow_rotation and confirmation == required_confirmation
         ):
             raise PermissionError(

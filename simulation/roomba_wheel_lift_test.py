@@ -24,7 +24,7 @@ COMMAND_QOS = QoSProfile(
     reliability=ReliabilityPolicy.RELIABLE,
     durability=DurabilityPolicy.VOLATILE,
 )
-ARM_SETTLE_S = 0.2
+ARM_ACCEPT_TIMEOUT_S = 5.0
 
 
 class RoombaWheelLiftTest(Node):
@@ -32,6 +32,9 @@ class RoombaWheelLiftTest(Node):
         super().__init__("roomba_wheel_lift_test")
         self.declare_parameter("command_topic", "/roomba/cmd_vel_unstamped")
         self.declare_parameter("arm_topic", "/roomba/arm_generation")
+        self.declare_parameter(
+            "arm_accepted_topic", "/roomba/arm_accepted_generation"
+        )
         self.declare_parameter("arm_generation", 0)
         self.declare_parameter("mode", "stop")
         self.declare_parameter("left_mm_s", 20.0)
@@ -41,9 +44,11 @@ class RoombaWheelLiftTest(Node):
         self.declare_parameter("allow_rotation", False)
         self.declare_parameter("confirmation", "")
         self.declare_parameter("subscriber_wait_timeout_s", 5.0)
+        self.declare_parameter("publish_period_s", 0.05)
 
         self.command_topic = self.get_parameter("command_topic").value
         self.arm_topic = self.get_parameter("arm_topic").value
+        self.arm_accepted_topic = self.get_parameter("arm_accepted_topic").value
         self.arm_generation = self.get_parameter("arm_generation").value
         self.profile = WheelLiftTestProfile(
             self.get_parameter("mode").value,
@@ -54,15 +59,28 @@ class RoombaWheelLiftTest(Node):
             allow_rotation=self.get_parameter("allow_rotation").value,
             confirmation=self.get_parameter("confirmation").value,
         )
+        self.publish_period_s = self.get_parameter("publish_period_s").value
+        if not isinstance(self.publish_period_s, (int, float)) or not (
+            0.05 <= self.publish_period_s <= 0.4
+        ):
+            raise ValueError("publish_period_s must be from 0.05 to 0.4 seconds")
         self.publisher = self.create_publisher(Twist, self.command_topic, COMMAND_QOS)
         self.arm_publisher = self.create_publisher(UInt32, self.arm_topic, COMMAND_QOS)
-        if self.profile.mode in ("rotate", "watchdog", "floor_straight") and not (
+        self.create_subscription(
+            UInt32, self.arm_accepted_topic, self.on_arm_accepted, COMMAND_QOS
+        )
+        if self.profile.mode in (
+            "rotate",
+            "watchdog",
+            "floor_straight",
+            "continuous_straight",
+        ) and not (
             isinstance(self.arm_generation, int)
             and not isinstance(self.arm_generation, bool)
             and 1 <= self.arm_generation <= 0xFFFFFFFF
         ):
             raise ValueError(
-                "rotate/watchdog requires arm_generation from 1 to 4294967295"
+                "motion test requires arm_generation from 1 to 4294967295"
             )
         now = time.monotonic()
         self.connection_gate = SubscriberConnectionGate(
@@ -71,10 +89,12 @@ class RoombaWheelLiftTest(Node):
         )
         self.started_at = None
         self.arm_sent_at = None
+        self.arm_accepted_at = None
+        self.drive_started_at = None
         self.finished = False
         self.silence_announced = False
         self.nonzero_announced = False
-        self.create_timer(0.05, self.tick)
+        self.create_timer(self.publish_period_s, self.tick)
         self.get_logger().warn(
             "wheel-lift test mode=%s topic=%s; existing bridge/Pico locks are unchanged"
             % (self.profile.mode, self.command_topic)
@@ -82,6 +102,14 @@ class RoombaWheelLiftTest(Node):
 
     def publish_stop(self):
         self.publisher.publish(Twist())
+
+    def on_arm_accepted(self, message):
+        if int(message.data) != self.arm_generation or self.arm_accepted_at is not None:
+            return
+        self.arm_accepted_at = time.monotonic()
+        self.get_logger().warn(
+            "matching ARM acceptance received: generation=%d" % self.arm_generation
+        )
 
     def publish_test_velocity(self):
         linear_x, angular_z = self.profile.twist()
@@ -127,7 +155,12 @@ class RoombaWheelLiftTest(Node):
             )
         elapsed = now - self.started_at
 
-        if self.profile.mode in ("rotate", "watchdog", "floor_straight"):
+        if self.profile.mode in (
+            "rotate",
+            "watchdog",
+            "floor_straight",
+            "continuous_straight",
+        ):
             if self.arm_sent_at is None:
                 arm = UInt32()
                 arm.data = self.arm_generation
@@ -137,9 +170,18 @@ class RoombaWheelLiftTest(Node):
                     "explicit ARM published: generation=%d" % self.arm_generation
                 )
                 return
-            if now - self.arm_sent_at < ARM_SETTLE_S:
+            if self.arm_accepted_at is None:
+                if now - self.arm_sent_at >= ARM_ACCEPT_TIMEOUT_S:
+                    self.get_logger().error(
+                        "matching ARM acceptance timed out; STOP only"
+                    )
+                    self.finish()
                 return
-            elapsed = now - self.arm_sent_at - ARM_SETTLE_S
+            if self.drive_started_at is None:
+                # Anchor the requested window to the first non-zero publish,
+                # after the bridge has validated Pico's matching ARM ACK.
+                self.drive_started_at = now
+            elapsed = now - self.drive_started_at
 
         if self.profile.mode == "stop":
             self.finish()

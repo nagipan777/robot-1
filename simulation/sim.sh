@@ -392,9 +392,26 @@ case "${1:-help}" in
     "${compose[@]}" cp "simulator:${container_output}/." "$output_dir"
     echo "Static ROS encoder artifacts saved: $output_dir"
     ;;
-  roomba-short-e-bridge|roomba-attended-floor-bridge|roomba-trial-session)
+  roomba-short-e-bridge|roomba-attended-floor-bridge|roomba-trial-session|roomba-continuous-trial-session)
     unified_session=false
-    if [ "$1" = "roomba-attended-floor-bridge" ] || [ "$1" = "roomba-trial-session" ]; then
+    continuous_mode=false
+    bridge_duration=0.4
+    port=""
+    if [ "$1" = "roomba-continuous-trial-session" ]; then
+      bridge_confirmation="CONTINUOUS_ATTENDED_FLOOR"
+      unified_session=true
+      continuous_mode=true
+      if [ "$#" -lt 4 ] || [ "$#" -gt 5 ] || [ "$3" != "$bridge_confirmation" ]; then
+        echo "Usage: $0 $1 PICO_IP $bridge_confirmation {1.0|2.0|3.0|5.0} [PORT]" >&2
+        exit 2
+      fi
+      bridge_duration="$4"
+      case "$bridge_duration" in
+        1.0|2.0|3.0|5.0) ;;
+        *) echo "continuous duration must be one staged value: 1.0, 2.0, 3.0, or 5.0" >&2; exit 2 ;;
+      esac
+      port="${5:-9000}"
+    elif [ "$1" = "roomba-attended-floor-bridge" ] || [ "$1" = "roomba-trial-session" ]; then
       bridge_confirmation="ATTENDED_FLOOR"
     else
       bridge_confirmation="WHEELS_LIFTED"
@@ -402,12 +419,14 @@ case "${1:-help}" in
     if [ "$1" = "roomba-trial-session" ]; then
       unified_session=true
     fi
-    if [ "$#" -lt 3 ] || [ "$#" -gt 4 ] || [ "$3" != "$bridge_confirmation" ]; then
-      echo "Usage: $0 $1 PICO_IP $bridge_confirmation [PORT]" >&2
-      exit 2
+    if [ "$continuous_mode" = false ]; then
+      if [ "$#" -lt 3 ] || [ "$#" -gt 4 ] || [ "$3" != "$bridge_confirmation" ]; then
+        echo "Usage: $0 $1 PICO_IP $bridge_confirmation [PORT]" >&2
+        exit 2
+      fi
+      port="${4:-9000}"
     fi
     host="$2"
-    port="${4:-9000}"
     short_e_owner="$$-$(date +%s)-${RANDOM}"
     short_e_pid_file=/tmp/roomba-short-e-bridge.pid
     session_container_dir="/tmp/roomba-trial-session-${short_e_owner}"
@@ -477,6 +496,8 @@ case "${1:-help}" in
       port="$4"
       session_dir="$5"
       unified_session="$6"
+      bridge_duration="$7"
+      continuous_mode="$8"
       exec 9>/tmp/roomba-physical-bridge.lock
       if ! flock -n 9; then
         echo "Refusing duplicate physical Roomba bridge: another session owns the lock" >&2
@@ -514,7 +535,11 @@ case "${1:-help}" in
         echo "Unified trial session: one bridge performs startup diagnosis, ARM wait, bounded trial, STOP, and shutdown"
         echo "Session logs: $session_dir"
       fi
-      /usr/local/bin/roomba-bridge-tcp --ros-args -p host:="$host" -p port:="$port" -p drive_enabled:=true -p diagnostic_on_connect:=true -p watchdog_test_mode:=false -p max_speed_mm_s:=20 -p command_timeout:=0.5 -p max_drive_session_duration:=0.4 -p command_topic:=/roomba/cmd_vel_unstamped "${trace_arguments[@]}" &
+      if [ "$continuous_mode" = true ]; then
+        /usr/local/bin/roomba-bridge-tcp --ros-args -p host:="$host" -p port:="$port" -p drive_enabled:=true -p diagnostic_on_connect:=true -p watchdog_test_mode:=false -p max_speed_mm_s:=20 -p command_timeout:=0.5 -p max_drive_session_duration:="$bridge_duration" -p continuous_drive_test_mode:=true -p continuous_drive_test_confirmation:=CONTINUOUS_ATTENDED_FLOOR -p command_topic:=/roomba/cmd_vel_unstamped "${trace_arguments[@]}" &
+      else
+        /usr/local/bin/roomba-bridge-tcp --ros-args -p host:="$host" -p port:="$port" -p drive_enabled:=true -p diagnostic_on_connect:=true -p watchdog_test_mode:=false -p max_speed_mm_s:=20 -p command_timeout:=0.5 -p max_drive_session_duration:=0.4 -p continuous_drive_test_mode:=false -p command_topic:=/roomba/cmd_vel_unstamped "${trace_arguments[@]}" &
+      fi
       bridge_pid=$!
       printf "%s %s\n" "$bridge_pid" "$owner" > "$pid_file"
       exec 8<&0
@@ -560,7 +585,7 @@ case "${1:-help}" in
         exit 130
       fi
       exit "$first_status"
-    ' -- "$short_e_pid_file" "$short_e_owner" "$host" "$port" "$session_container_dir" "$unified_session" &
+    ' -- "$short_e_pid_file" "$short_e_owner" "$host" "$port" "$session_container_dir" "$unified_session" "$bridge_duration" "$continuous_mode" &
     short_e_exec_pid=$!
     wait "$short_e_exec_pid"
     short_e_status=$?
@@ -632,6 +657,25 @@ case "${1:-help}" in
         'source /opt/create3_ws/install/setup.bash; exec /usr/local/bin/roomba-wheel-lift-test --ros-args -p mode:="$1"' \
         -- "$mode"
     fi
+    ;;
+  roomba-continuous-straight-test)
+    if [ "$#" -ne 3 ] || [ "$3" != "CONTINUOUS_ATTENDED_FLOOR" ]; then
+      echo "Usage: $0 roomba-continuous-straight-test {1.0|2.0|3.0|5.0} CONTINUOUS_ATTENDED_FLOOR" >&2
+      exit 2
+    fi
+    duration="$2"
+    case "$duration" in
+      1.0) command_duration="0.9" ;;
+      2.0) command_duration="1.9" ;;
+      3.0) command_duration="2.8" ;;
+      5.0) command_duration="4.9" ;;
+      *) echo "continuous duration must be one staged value: 1.0, 2.0, 3.0, or 5.0" >&2; exit 2 ;;
+    esac
+    echo "Continuous trial command window: ${command_duration}s; fixed safety limit: ${duration}s"
+    arm_generation="$(date +%s)"
+    "${compose[@]}" exec simulator bash -lc \
+      'source /opt/create3_ws/install/setup.bash; exec /usr/local/bin/roomba-wheel-lift-test --ros-args -p mode:=continuous_straight -p left_mm_s:=20.0 -p right_mm_s:=20.0 -p drive_duration_s:="$1" -p publish_period_s:=0.1 -p allow_rotation:=true -p confirmation:=CONTINUOUS_ATTENDED_FLOOR -p arm_generation:="$2"' \
+      -- "$command_duration" "$arm_generation"
     ;;
   aruco-pose)
     "${compose[@]}" exec simulator bash -lc \

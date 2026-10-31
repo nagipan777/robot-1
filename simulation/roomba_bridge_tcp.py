@@ -53,6 +53,9 @@ class RoombaBridgeTcp(Node):
         self.declare_parameter("port", 9000)
         self.declare_parameter("command_topic", "/roomba/cmd_vel_unstamped")
         self.declare_parameter("arm_topic", "/roomba/arm_generation")
+        self.declare_parameter(
+            "arm_accepted_topic", "/roomba/arm_accepted_generation"
+        )
         self.declare_parameter("drive_enabled", False)
         self.declare_parameter("diagnostic_on_connect", False)
         self.declare_parameter("wheel_base", 0.235)  # 車輪間距離 [m]
@@ -76,6 +79,7 @@ class RoombaBridgeTcp(Node):
         self.port = self.get_parameter("port").value
         self.command_topic = self.get_parameter("command_topic").value
         self.arm_topic = self.get_parameter("arm_topic").value
+        self.arm_accepted_topic = self.get_parameter("arm_accepted_topic").value
         self.drive_enabled = self.get_parameter("drive_enabled").value
         self.diagnostic_on_connect = self.get_parameter("diagnostic_on_connect").value
         self.wheel_base = self.get_parameter("wheel_base").value
@@ -161,6 +165,9 @@ class RoombaBridgeTcp(Node):
         self.idle_stop_sent = False
         self.create_subscription(Twist, self.command_topic, self.on_cmd, COMMAND_QOS)
         self.create_subscription(UInt32, self.arm_topic, self.on_arm, COMMAND_QOS)
+        self.arm_accepted_publisher = self.create_publisher(
+            UInt32, self.arm_accepted_topic, COMMAND_QOS
+        )
         # Correctness does not depend on this timer: every Drive has an
         # absolute pre-send deadline check and Pico has an independent bound.
         # Keep the established 20 Hz rate to avoid multiplying idle STOP TCP
@@ -350,6 +357,9 @@ class RoombaBridgeTcp(Node):
             self.latency_trace.record(
                 "arm_accepted", generation=generation
             )
+            accepted = UInt32()
+            accepted.data = generation
+            self.arm_accepted_publisher.publish(accepted)
             self.get_logger().warn(
                 "ARM accepted for this TCP session: generation=%d" % generation
             )

@@ -6,6 +6,8 @@ import unittest
 
 from simulation.roomba_wheel_lift_test_core import (
     ATTENDED_FLOOR_CONFIRMATION,
+    CONTINUOUS_CONFIRMATION,
+    MAX_CONTINUOUS_DRIVE_DURATION_S,
     MAX_DRIVE_DURATION_S,
     MAX_WHEEL_SPEED_MM_S,
     ROTATION_CONFIRMATION,
@@ -120,6 +122,53 @@ class WheelLiftTestProfileTests(unittest.TestCase):
         self.assertEqual(profile.twist(), (0.02, 0.0))
         self.assertTrue(profile.sends_nonzero)
 
+    def test_continuous_straight_is_separate_confirmed_and_bounded(self):
+        self.assertEqual(MAX_CONTINUOUS_DRIVE_DURATION_S, 5.0)
+        for confirmation in ("", ATTENDED_FLOOR_CONFIRMATION, ROTATION_CONFIRMATION):
+            with self.subTest(confirmation=confirmation), self.assertRaises(
+                PermissionError
+            ):
+                WheelLiftTestProfile(
+                    "continuous_straight",
+                    drive_duration_s=2.0,
+                    allow_rotation=True,
+                    confirmation=confirmation,
+                )
+        profile = WheelLiftTestProfile(
+            "continuous_straight",
+            drive_duration_s=2.0,
+            allow_rotation=True,
+            confirmation=CONTINUOUS_CONFIRMATION,
+        )
+        self.assertEqual(profile.twist(), (0.02, 0.0))
+
+    def test_motion_waits_for_matching_arm_acceptance(self):
+        source = (ROOT / "simulation" / "roomba_wheel_lift_test.py").read_text()
+        tick = source[source.index("    def tick(self):") :]
+        self.assertIn("if self.arm_accepted_at is None:", tick)
+        self.assertIn("matching ARM acceptance timed out; STOP only", tick)
+        self.assertLess(
+            tick.index("if self.arm_accepted_at is None:"),
+            tick.index("self.publish_test_velocity()"),
+        )
+
+    def test_mismatched_arm_acceptance_cannot_start_drive_window(self):
+        source = (ROOT / "simulation" / "roomba_wheel_lift_test.py").read_text()
+        callback = source[
+            source.index("    def on_arm_accepted") : source.index(
+                "    def publish_test_velocity"
+            )
+        ]
+        self.assertIn("int(message.data) != self.arm_generation", callback)
+        self.assertIn("self.arm_accepted_at = time.monotonic()", callback)
+        with self.assertRaises(ValueError):
+            WheelLiftTestProfile(
+                "continuous_straight",
+                drive_duration_s=5.001,
+                allow_rotation=True,
+                confirmation=CONTINUOUS_CONFIRMATION,
+            )
+
     def test_wheel_speed_and_duration_limits_are_enforced(self):
         self.assertEqual(MAX_WHEEL_SPEED_MM_S, 20)
         self.assertEqual(MAX_DRIVE_DURATION_S, 1.0)
@@ -161,6 +210,15 @@ class WheelLiftTestProfileTests(unittest.TestCase):
         self.assertIn("SubscriberConnectionGate", source)
         self.assertIn("published non-zero Twist", source)
         self.assertIn("qos=reliable/volatile", source)
+        self.assertIn('declare_parameter("publish_period_s", 0.05)', source)
+        self.assertIn("self.create_timer(self.publish_period_s", source)
+        self.assertIn("self.drive_started_at = None", source)
+        self.assertIn("self.arm_accepted_at = None", source)
+        self.assertIn("def on_arm_accepted", source)
+        self.assertIn("matching ARM acceptance timed out; STOP only", source)
+        self.assertIn("elapsed = now - self.drive_started_at", source)
+        self.assertNotIn("elapsed = now - self.arm_sent_at - ARM_SETTLE_S", source)
+        self.assertNotIn("ARM_SETTLE_S", source)
 
     def test_existing_drive_locks_remain_disabled(self):
         bridge = (ROOT / "simulation" / "roomba_bridge_tcp.py").read_text()
