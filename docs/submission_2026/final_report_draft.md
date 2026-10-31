@@ -1,90 +1,105 @@
-# PAI最終課題 最終レポート初稿
+# AIによるゴミ認識に基づく Roomba 680の低速移動制御
 
-## 1. 課題設定と目的
+作成者：nagisan1012　更新：2026年10月31日
 
-本課題は、固定カメラから対象物を検出し、Roomba 680の姿勢を推定し、ROS 2で移動候補を生成してPico W経由で実機へ伝える統合システムである。目的は単なる走行ではなく、認識喪失や通信異常を含む段階的な検証可能性を保ちつつ、AI判断が実機の限定低速動作へ到達することを示す点に置いた。
+## 1 タスクの目的と達成した行動
 
-## 2. システム構成と技術選定
+本課題のタスクは、床面のゴミを固定カメラで認識し、対象位置とRoomba 680の姿勢から移動指令を生成して、有人監視下で低速駆動・停止させることである。清掃作業への応用を目指し、認識・幾何変換・制御・通信を接続するPhysical AIシステムを構築した。
 
-経路はUSB camera→YOLO/ArUco→ROS 2 Navigation→output adapter→TCP bridge→Pico W→Roomba OIである。YOLOはmaskを`litter`として検出し、ArUco DICT_4X4_50 ID 0からRoomba姿勢を得る。Navigation入力はArUco由来の`/robot/pose`であり、車輪odometryとは融合していない。
+固定環境でマスクをlitterとして検出し、YOLO・ArUco・ROS 2 Navigation・Pico Wを介した実機の短時間前進と停止に成功した[1]。別の床面直進試験では56 mmの実移動を確認した[5]。ただし、その56 mmをAIによる目標到達の結果とは扱わず、ゴミへの自律接近・回収完了は今後の課題とする。
 
-固定構成はv2 model（SHA256 `3e1de3...12b03`）、confidence 0.50、imgsz 960、camera 800×600である。較正は高さ0.53 m、80 mm marker、独立点誤差0.0427/0.0243 mで確認した。ただし有効範囲は固定環境の前方60～80 cmであり、一般環境性能を主張しない。[較正記録](../CAMERA_CALIBRATION_20261028.md)
+## 2 AIと通常制御の役割分担
 
-## 3. 安全設計
+学習モデルを使うAI部分はYOLOである。ArUco・床面射影は幾何計算、Navigationと実機出力は通常の制御・通信処理である。ARMは走行許可の状態であり、ロボットアームを意味しない。
 
-実機出力は明示ARM世代、STOP latch、20 mm/s上限、host/Pico 400 ms session limit、500 ms watchdog、UART異常STOP、50 cm近傍guard、姿勢鮮度、人間の試行承認で制限する。BRC自動起床は使わずCLEAN手動起床とした。TCP接続を跨いだARM再利用、自動再ARM、Drive再送を禁止した。
+| 機能 | 担当する処理 | 出力 |
+| --- | --- | --- |
+| YOLO | 画像からマスクをlitterとして物体検出[10] | Bounding Box・信頼度 |
+| ArUcoと床面射影 | マーカー検出と較正値から姿勢・対象位置を計算[12] | map座標の位置・向き |
+| ROS 2 Navigation | 承認目標と現在姿勢から旋回・前進速度を計算 | 速度候補 |
+| ARM・Pico W・Roomba | 走行許可と速度制限を検査し、TCP→UART/OIで駆動 | 車輪の低速動作・停止 |
 
-これらは限定試験の防御であり、物理停止をソフトウェアだけで保証するものではない。各有人試行で人間が停止・異音・再発進を確認した。
+構成：固定カメラ → YOLOによる対象検出／ArUco・床面射影による位置・姿勢 → ROS 2 Navigation → 走行許可ARMとTCP → Pico W → UART/OI → Roomba 680。
 
-## 4. 段階的な実験方法
+## 3 学習と実環境に合わせた工夫
 
-検証は(1) unit/mock、(2) ROS replay/dry-run、(3)実カメラ非走行、(4)実Pico/Roomba非走行、(5)人間立会い単発の順に進めた。実カメラ非走行ではmask検出、ArUco姿勢、Navigation候補、検出途絶STOP、姿勢喪失STOP、同一目標の自動再開なしを確認した。Create3/Gazeboは認識・制御表示用のsimulationであり、実機結果と分離した。[証拠対応表](evidence_matrix.md)
+TACO[11]による初期学習後、Roomba本体や床テープの誤検出を発見した。マスク正例と空ラベルのRoomba負例を追加し、位置・向きの異なる実画像を混合してv2を選定した[1,2]。hard-negative段階の分割はtrain 53枚・val 20枚・test 19枚であり、最終v2の全学習枚数とは区別する。
 
-## 5. 実機統合の結果
+実機統合試験ではv2、confidence 0.50、推論imgsz 960、カメラ取得800×600を使用した。報告値は混合test mAP50 0.641、実画像test 0.982である[1]。小規模・同環境での値を未知環境に一般化しない。28日に確認した前方60〜80 cmも、29日には70 cmで検出が不安定となり、配置ごとの再現性を残した。
 
-2026-10-28の有人床面単発では、AI経路からARMを経て左右20/20 mm/sをRoombaへ送った。PicoはDrive sequence 1–7を記録し、最初のDriveから通常STOPまで289 msだった。人間は短時間前進、両輪停止、異音なし、再発進なしを確認した。最終状態はSTOP ACK `0x07`、左右0、Safe 2、lock Falseである。[試行JSON](../../artifacts/step41/ai_attended_floor_trial_20261028.json)
+固定カメラ較正の当てはめRMSEは0.0193 m、独立2点の誤差は0.0427 m・0.0243 mだった[3]。これらは平面較正の誤差であり、実機移動中の総合精度や3D自己位置精度を直接示す値ではない。
 
-2026-10-29の別試験はP3-2 deadline修正版の有人両輪浮上試験である。hostは6件の完全ACKを受信し、7件目のACK待ちをdeadlineで中断してSTOP・ARM失効・接続破棄を行った。Picoは期限前に届いた7件目を含む7 Driveを記録し、最初のDriveから通常STOPまで224 ms、STOP後Drive 0件だった。物理停止と再発進なしも確認した。[P3-2報告](../../P3_2_DEADLINE_IO_SEPARATION_REPORT_20261029.md)
+## 4 実験結果とタスク達成範囲
 
-同日午前の追加AI統合試行は別の**FAIL**である。Navigation候補がSTOPした後、人間の
-ARM操作まで約23.26秒空き、ARM ACKは成立したがARM後の新鮮な候補がなく、Driveは
-0件、物理移動も0件だった。再ARM・再Driveは行わず安全終了した。このFAILは10月28日
-のAI床面PASSやP3-2浮上PASSを取り消すものではなく、有人操作と候補鮮度の同期不足を
-示した。[追加統合試行](FINAL_INTEGRATION_ATTEMPT_20261029.md)
+認識から実機駆動までの統合結果を主成果とし、直進の継続性や停止期限は別の評価項目として記録した。試行ごとにソフトウェア版、床面／浮上、速度・期限が異なるため、結果を一つの連続成功として合算しない。
 
-対策として、固定generationと確認文字列を必須とし、新鮮な非ゼロNavigation候補2件と
-ARM subscriber 1件を確認した場合だけARMを1回publishして終了する同期補助を追加した。
-古い姿勢ではARM 0件でtimeoutし、明示的にcontroller/姿勢状態を初期化した新しい試行
-では実カメラ候補から模擬ARM 1件を確認した。mask除去後は非ゼロ候補0件、再ARM 0件、
-物理Roomba topic不存在だった。これは手順改善の実カメラ非走行PASSであり、実Picoとの
-同期や物理走行は未確認である。[同期補助報告](ATTENDED_NAV_ARM_SYNC_REPORT_20261029.md)
+| 実験 | 達成・観測した行動 | 評価と限界 |
+| --- | --- | --- |
+| 10月28日 AI連動・有人床面 | 左右20 mm/s、Drive ACK 7件。Pico上のDrive→通常STOP 289 ms。短時間前進・物理停止・再発進なし[1]。 | AI連動実機統合に成功。目標到達・回収は未評価。 |
+| 10月29日 期限制御・浮上 | ACK待機を期限で中断。Pico上のDrive→STOP 224 ms、STOP後Drive 0件。物理停止を確認[4]。 | 停止動作を確認。ホスト400 ms厳守は未判定。 |
+| 10月29日 AI統合の再試行 | ARMは受理されたが、新鮮なNavigation候補がなくDrive 0件・移動なし。再ARMせず終了。 | 再試行は不成立。候補鮮度とARM操作の同期が課題。 |
+| 10月30日 C3有人床面直進 | 1回目26 mm。Safe照会の動作窓分離後、2回目はACK 22件・実測56 mm。watchdog停止、異音・再発進なし[5]。 | 距離40〜80 mm帯は達成。2.8秒の連続性と試行総合はFAIL。 |
+| 10月31日 C2再構成版・浮上 | 2.0秒上限で3試行。1回目ACK 29件、初回ACK→STOP約1.831秒。2・3回目は未完了。全3回で停止・再発進なし[6]。 | 動作完了1/3、停止3/3。連続性は2/3不成立で、総合再現性は未達。 |
 
-## 6. ARM ACK消失の原因と修正
+## 5 障害を切り分けて改善した点
 
-初回短縮EではPicoがARM generationを受理した一方、hostは0/7 byteでtimeoutした。MicroPythonのnon-blocking `socket.send()`が`None`を返した際、旧実装が残り全byteを送信済みと誤認したことが根因だった。
+ARM ACK消失は、MicroPythonのsend()がNoneを返した際の送信完了誤認を修正し、ACK全送信後だけARMを確定する方式にした。接続IDと世代管理を加え、実Picoのロック状態・非走行再接続試験は10/10成功した[9]。
 
-修正は、would-block/`None`を既存送信期限内で再試行し、全byte送信後だけARMをcommitするものとした。`ARM_PENDING`、connection ID、失敗時STOP latch、古いgeneration拒否も追加した。実Pico locked非走行probeは10/10成功した。timeout延長では解決していない。[ARM/TCP分析](../../ARM_TCP_RECOVERY_20261026.md)
+連続制御では、同期Safe照会が送信を妨げたため、専用試験モードの動作窓から分離した[5]。ACK送信完了と相手への到達も区別した。Macネイティブの非走行30応答は全て受信したが、最大RTTは267.574 msだった。TCP再送は観測されず、無線・キューの影響は候補として残る[7]。31日の再試験では別に、ACK受信後のホスト処理停滞とOI Safe喪失も確認され、原因を一つに決めつけなかった[6]。
 
-## 7. deadline遅延の原因と修正
+## 6 停止期限の評価と位置付け
 
-旧20 Hz timerでは期限検知が約41 ms遅れた。100 Hz化後も実通信でsingle-threaded executorが同期Safe照会またはDrive ACK待ちにより約181 ms塞がれた。STOP TCP write自体は0.483 msで主因ではなかった。
+400 msは本システムで設定した追加の停止性能評価であり、タスク実行の成否とは分けて示す。旧実装ではSTOP送信開始が441.812 ms、100 Hz監視追加後の別試行でも583.136 msとなった。同期I/Oを期限確認付き待機へ変更し、期限時にSTOP・ARM失効・接続破棄を行う方式に修正した[4]。
 
-P3-2ではsocket所有者を一元化したまま、固定応答待ちを最大10 msのpollへ分割した。絶対期限では同じ所有者がSTOPを送信し、ARMを失効してsocketを閉じる。遅延ACKは次セッションへ持ち越さず、未送信Driveは破棄する。50/181/300 ms遅延、部分受信、切断、遅延ACKを模擬し、focused 66/66、全体369/369がPASSした。
+修正版ではPico側224 msの停止を確認したが、ホスト内部のSTOP開始時刻を保存しておらず、厳密な400.000 ms以内の開始は未判定である。後続エラーログの400.734 msをSTOP開始時刻に置き換えない。2.0／3.0秒の連続試験は通常400 msモードと分離し、500 ms watchdogは維持した[4–6]。
 
-有人浮上試験ではこの中断経路が動作した。ただし`latency_trace_path`未指定のため厳密なhost STOP開始時刻は保存されていない。開始から後続エラーログまでは400.734 msで、STOP送信・closeはそれ以前である。後のログ改善版は回帰PASSだが追加実機走行なしである。よって「Pico相対Drive→STOP 224 ms」は実測、「host STOP begin <=400.000 ms」は未確認と区別する。
+## 7 考察と今後の課題
 
-## 8. 観測機能、限界、今後
+本課題では、AIによる対象認識を実機の限定動作へ接続し、実環境の誤検出、ACK消失、同期I/Oによる時間制御の阻害を観測・修正した。56 mmの床面移動や一度の連続動作を達成した一方、繰り返し動作の再現性は未達である。実測した行動、模擬検証、未検証の範囲を区別することが、成果を正確に示す上で重要だった。
 
-車輪odometryはencoder CSV replayから`/roomba/odom`を発行する観測用dry-runを完成させた。wrap、jump、途絶、再接続を検証し、TFとNavigation接続は無効である。OI packet 43/44の実機取得、左右符号、scale、実時間比較は未統合であり、実機odometry PASSとはしない。[odometry報告](../../ODOMETRY_DRYRUN_REPORT_20261027.md)
+今後は、候補の生成時刻とARM受理の同期、ホスト処理・無線遅延の切り分け、厳密なSTOP開始時刻の計測、目標到達・停止位置の評価を進める。観測用オドメトリは模擬ROS 2 E2Eまでで、実機OI packet 43/44取得とNavigationへの融合は未統合である。10月31日の通常経路の安全修正も非走行回帰380/380であり、修正後の実機合格とは扱わない[8]。
 
-成果は、限定された固定環境でAI認識から実機低速単発まで到達し、実際に生じたARM ACK消失とdeadline阻害を原因ベースで修復した点にある。残る課題は、実機動画の収録、厳密host STOP begin trace、一般環境の検出評価、実機encoder統合、連続運転評価である。これらを未確認のまま無人連続走行の安全性は主張しない。
+生成AIを補助に用いる開発では、実装範囲、試験ハーネスと合否基準、実機試験の判断を人間側で明示する重要性を学んだ。過度な機能追加や開発規模を超える修正を避け、今回のタスクを検証できる単位で進める方針とした。
 
-提出証拠パッケージ作成時点の全回帰は373/373 PASSであり、その根拠はコミット
-`299e065`の証拠対応表に記録した。本文中の369/369はP3-2修正時点の記録である。
-ARM同期補助の7テスト追加後は380/380 PASSとなった。いずれも各時点の結果であり、
-件数を遡って書き換えない。公式提出形式はリポジトリ内で確認できておらず、最終提出前に
-外部の課題要項と照合する必要がある。
+## 8 動画とコード一式
 
-## 参考資料
+提出動画PAI_test3.mp4は、対象認識、システム構成、実機、課題の説明を含む。認識→姿勢・移動候補→実機の行動というタスクの流れを中心に示し、STOPの詳細は補足として説明する。Create 3の記録軌跡再生はシミュレーションと明示し、編集映像を一連の自律走行や期限測定の証拠にしない。
 
-- [証拠対応表](evidence_matrix.md)
-- [最終統合チェックリスト](final_integration_checklist.md)
-- [動画台本](video_storyboard.md)
-- [素材一覧](asset_inventory.md)
-- `AI_ATTENDED_FLOOR_DEADLINE_REPORT_20261029.md`
-- `P3_2_DEADLINE_IO_SEPARATION_REPORT_20261029.md`
+コード一式は https://github.com/nagipan777/robot-1 に公開し、提出原稿はfeature/navigation-hardware-unit-test、初期統合・期限修正の証拠はfix-arm-ack-session-recoveryを参照する。試験で用いた版と後の修正版を区別し、C2の再構成版を当時の配備ソースそのものとは主張しない。
 
-## PDF編集時の図配置案
+## 9 参考文献と検証資料
 
-1. 第2章直後: USB camera→YOLO/ArUco→ROS 2→Pico→Roombaの構成図。
-2. 第4章直後: simulation、dry-run、実カメラ非走行、有人実機の証拠区分表。
-3. 第5章: 10月28日AI床面PASS、10月29日P3-2浮上PASS、同日追加試行FAILを
-   同じ時間軸に混ぜず、3つの小表として配置。
-4. 第6章: ARM_PENDING→ACK完全送信→ARM_COMMITの状態遷移図。
-5. 第7章: Drive、ACK待ち中断、STOP、socket closeのdeadline時系列図。
-6. 第8章: `artifacts/odometry_dryrun/e2e/offline/trajectory.svg`。図注に
-   「mock/replay、実機encoder未統合」と明記。
+実機試験モデル：best_position_v2_20261028.pt。SHA-256：
 
-本文6–8ページに収める場合、詳細ログは参考資料へ移し、各図には`実測`、`非走行`、
-`simulation`、`未確認`の区分を必ず付ける。
+3e1de3c72c6d807fd527cefc6b70801275e3a9b54bb9daa8d87a59dc7be12b03
+
+[1] AI非走行ゲートとv2評価・有人床面試験. 2026-10-28. https://github.com/nagipan777/robot-1/blob/fix-arm-ack-session-recovery/docs/AI_NONDRIVING_GATE_20261028.md
+
+[2] 実環境hard-negative追加学習報告. 2026-10-28. https://github.com/nagipan777/robot-1/blob/fix-arm-ack-session-recovery/docs/YOLO_HARD_NEGATIVE_20261028.md
+
+[3] 固定カメラ較正記録. 2026-10-28. https://github.com/nagipan777/robot-1/blob/fix-arm-ack-session-recovery/docs/CAMERA_CALIBRATION_20261028.md
+
+[4] P3-2期限修正と実機検証報告. 2026-10-29. https://github.com/nagipan777/robot-1/blob/fix-arm-ack-session-recovery/P3_2_DEADLINE_IO_SEPARATION_REPORT_20261029.md
+
+[5] C3_CONTINUOUS_FLOOR_RESULTS_20261030.md. 実装班提出補足資料. 2026-10-30.
+
+[6] C2再検証報告. 2026-10-31. https://github.com/nagipan777/robot-1/blob/feature/navigation-hardware-unit-test/docs/C2_REVALIDATION_REPORT_20261031.md
+
+[7] C3_TCP_ACK_DELIVERY_INVESTIGATION_20261030.md. 実装班提出補足資料. 2026-10-30.
+
+[8] 非走行安全修正報告. 2026-10-31. https://github.com/nagipan777/robot-1/blob/fix-arm-ack-session-recovery/docs/NON_DRIVING_FIXES_20261031.md
+
+[9] ARM ACK通信障害と実Pico再検証. 2026-10-27. https://github.com/nagipan777/robot-1/blob/fix-arm-ack-session-recovery/NIGHTLY_ARM_TCP_REPORT_20261027.md
+
+[10] Redmon, J. et al. You Only Look Once: Unified, Real-Time Object Detection. CVPR, pp. 779–788, 2016. https://arxiv.org/abs/1506.02640
+
+[11] Proença, P. F. and Simões, P. TACO: Trash Annotations in Context for Litter Detection. arXiv:2003.06975, 2020. https://arxiv.org/abs/2003.06975
+
+[12] Garrido-Jurado, S. et al. Automatic generation and detection of highly reliable fiducial markers under occlusion. Pattern Recognition, 47(6), pp. 2280–2292, 2014. https://doi.org/10.1016/j.patcog.2014.01.005
+
+[13] Casini, D. et al. Response-Time Analysis of ROS 2 Processing Chains Under Reservation-Based Scheduling. ECRTS, pp. 6:1–6:23, 2019. https://doi.org/10.4230/LIPIcs.ECRTS.2019.6
+
+[14] からあげ. ルンバをRaspberry Piを使ってROSでコントロールできるように改造してみた（半田付け無しでOK）. 2017-05-12. https://karaage.hatenadiary.jp/entry/2017/05/12/073000
+
+文献[10]はYOLOの原著であり、使用したUltralytics版の構造・性能の直接証拠ではない。[13]はROS 2 Crystalの解析で、本システムの時間保証ではない。[14]はRaspberry PiとROSによる参考実装で、Pico W・ROS 2構成とは異なる。
 
