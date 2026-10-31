@@ -308,6 +308,61 @@ class PicoRelayProtocolTests(unittest.TestCase):
             ),
         )
 
+    def test_live_uart_wait_is_interrupted_by_drive_session_deadline(self):
+        relay, uart = load_relay()
+        relay.ALLOW_NONZERO_DRIVE = True
+        connection = FakeConnection()
+        relay.forward_valid_frames(bytearray(self.arm_frame(relay, 90)), connection)
+        relay.forward_valid_frames(
+            bytearray(self.drive_frame(relay, 90, sequence=1)), connection
+        )
+        started_at = relay.motion_latch.drive_started_at_ms
+        uart.writes.clear()
+
+        response = relay.query_uart(
+            bytes([relay.SENSORS, relay.SENSOR_OI_MODE]), 1
+        )
+
+        self.assertEqual(response, b"")
+        self.assertEqual(relay.motion_latch.state, relay.MotionLatch.LATCHED_STOP)
+        self.assertIn(relay.STOP, uart.writes)
+        self.assertLess(
+            relay.time.now - started_at,
+            relay.UART_DIAGNOSTIC_TIMEOUT_MS,
+        )
+
+    def test_idle_uart_wait_keeps_existing_diagnostic_timeout(self):
+        relay, uart = load_relay()
+        query = bytes([relay.SENSORS, relay.SENSOR_OI_MODE])
+        started_at = relay.time.now
+
+        response = relay.query_uart(query, 1)
+
+        self.assertEqual(response, b"")
+        self.assertEqual(relay.motion_latch.state, relay.MotionLatch.STOPPED)
+        self.assertNotIn(relay.STOP, uart.writes)
+        self.assertGreaterEqual(
+            relay.time.now - started_at,
+            relay.UART_DIAGNOSTIC_TIMEOUT_MS,
+        )
+
+    def test_live_uart_wait_with_complete_response_keeps_arm_and_payload(self):
+        relay, uart = load_relay()
+        relay.ALLOW_NONZERO_DRIVE = True
+        query = bytes([relay.SENSORS, relay.SENSOR_OI_MODE])
+        uart.responses[query] = b"\x02"
+        connection = FakeConnection()
+        relay.forward_valid_frames(bytearray(self.arm_frame(relay, 91)), connection)
+        relay.forward_valid_frames(
+            bytearray(self.drive_frame(relay, 91, sequence=1)), connection
+        )
+
+        response = relay.query_uart(query, 1)
+
+        self.assertEqual(response, b"\x02")
+        self.assertEqual(relay.motion_latch.state, relay.MotionLatch.ARMED)
+        self.assertNotIn(relay.STOP, uart.writes)
+
     def test_stop_ack_reports_uart_and_robot_zero(self):
         relay, uart = load_relay()
         query = bytes(

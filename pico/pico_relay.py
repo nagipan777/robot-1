@@ -131,6 +131,7 @@ class MotionLatch:
         self.last_sequence = 0
         self.armed_at_ms = None
         self.drive_started_at_ms = None
+        self.last_drive_at_ms = None
         self.pending_generation = None
         self.pending_at_ms = None
         self.connection_id = None
@@ -148,6 +149,7 @@ class MotionLatch:
         self.last_sequence = 0
         self.armed_at_ms = None
         self.drive_started_at_ms = None
+        self.last_drive_at_ms = None
         self.state = self.ARM_PENDING
         return True
 
@@ -188,6 +190,7 @@ class MotionLatch:
 
     def record(self, sequence):
         self.last_sequence = sequence
+        self.last_drive_at_ms = time.ticks_ms()
         self.armed_at_ms = None
         if self.drive_started_at_ms is None:
             self.drive_started_at_ms = time.ticks_ms()
@@ -217,6 +220,7 @@ class MotionLatch:
             self.pending_connection_id = None
             self.armed_at_ms = None
             self.drive_started_at_ms = None
+            self.last_drive_at_ms = None
 
     def latch_stop(self):
         self.state = self.LATCHED_STOP
@@ -227,6 +231,7 @@ class MotionLatch:
         self.pending_connection_id = None
         self.armed_at_ms = None
         self.drive_started_at_ms = None
+        self.last_drive_at_ms = None
 
 
 motion_latch = MotionLatch()
@@ -389,6 +394,20 @@ def send_all(connection, data, event_prefix=None, connection_id=None, generation
     return offset
 
 
+def enforce_deadlines_during_uart_wait():
+    """Reuse motion deadlines while a diagnostic owns the UART wait loop."""
+    if motion_latch.state != MotionLatch.ARMED:
+        return False
+    if enforce_drive_session_deadline(False):
+        return True
+    if (
+        motion_latch.last_drive_at_ms is not None
+        and enforce_command_watchdog(motion_latch.last_drive_at_ms, False)
+    ):
+        return True
+    return enforce_arm_watchdog()
+
+
 def drain_uart_until_quiet(
     quiet_ms=UART_DRAIN_QUIET_MS, timeout_ms=UART_DRAIN_TIMEOUT_MS
 ):
@@ -398,6 +417,8 @@ def drain_uart_until_quiet(
     discarded_count = 0
     discarded_tail = bytearray()
     while time.ticks_diff(time.ticks_ms(), started) < timeout_ms:
+        if enforce_deadlines_during_uart_wait():
+            return False
         available = uart.any()
         if available:
             discarded = uart.read(available)
@@ -422,6 +443,8 @@ def read_uart_exact(size, timeout_ms=UART_DIAGNOSTIC_TIMEOUT_MS):
     received = bytearray()
     started = time.ticks_ms()
     while len(received) < size:
+        if enforce_deadlines_during_uart_wait():
+            return b""
         available = uart.any()
         if available:
             received.extend(uart.read(min(available, size - len(received))))
@@ -440,8 +463,12 @@ def query_uart(command, response_size):
         print("UART diagnostic pause write failed")
         return b""
     time.sleep_ms(20)
+    if enforce_deadlines_during_uart_wait():
+        return b""
     if not drain_uart_until_quiet():
         print("UART diagnostic sync failed; command={}".format(hex_bytes(command)))
+        return b""
+    if enforce_deadlines_during_uart_wait():
         return b""
     if not uart_write_exact(command):
         print("UART diagnostic query write failed; command={}".format(hex_bytes(command)))
