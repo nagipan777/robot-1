@@ -1,8 +1,169 @@
+import importlib.util
 import pathlib
+import sys
+import types
 import unittest
+from unittest import mock
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+
+
+def load_bridge_module():
+    class Node:
+        pass
+
+    class Twist:
+        def __init__(self):
+            self.linear = types.SimpleNamespace(x=0.0)
+            self.angular = types.SimpleNamespace(z=0.0)
+
+    class UInt32:
+        def __init__(self):
+            self.data = 0
+
+    class QoSProfile:
+        def __init__(self, **_kwargs):
+            pass
+
+    rclpy = types.ModuleType("rclpy")
+    rclpy_node = types.ModuleType("rclpy.node")
+    rclpy_node.Node = Node
+    rclpy_qos = types.ModuleType("rclpy.qos")
+    rclpy_qos.QoSProfile = QoSProfile
+    rclpy_qos.DurabilityPolicy = types.SimpleNamespace(VOLATILE=1)
+    rclpy_qos.HistoryPolicy = types.SimpleNamespace(KEEP_LAST=1)
+    rclpy_qos.ReliabilityPolicy = types.SimpleNamespace(RELIABLE=1)
+    geometry_msgs = types.ModuleType("geometry_msgs")
+    geometry_msgs_msg = types.ModuleType("geometry_msgs.msg")
+    geometry_msgs_msg.Twist = Twist
+    std_msgs = types.ModuleType("std_msgs")
+    std_msgs_msg = types.ModuleType("std_msgs.msg")
+    std_msgs_msg.UInt32 = UInt32
+    modules = {
+        "rclpy": rclpy,
+        "rclpy.node": rclpy_node,
+        "rclpy.qos": rclpy_qos,
+        "geometry_msgs": geometry_msgs,
+        "geometry_msgs.msg": geometry_msgs_msg,
+        "std_msgs": std_msgs,
+        "std_msgs.msg": std_msgs_msg,
+    }
+    path = ROOT / "simulation" / "roomba_bridge_tcp.py"
+    spec = importlib.util.spec_from_file_location("roomba_bridge_runtime_test", path)
+    module = importlib.util.module_from_spec(spec)
+    with mock.patch.dict(sys.modules, modules), mock.patch.object(
+        sys, "path", [str(ROOT / "simulation")] + sys.path
+    ):
+        spec.loader.exec_module(module)
+    return module
+
+
+class FakeLogger:
+    def __init__(self):
+        self.messages = []
+
+    def info(self, message):
+        self.messages.append(("info", message))
+
+    def warn(self, message):
+        self.messages.append(("warn", message))
+
+
+class FakeTrace:
+    def record(self, *_args, **_kwargs):
+        pass
+
+
+class QuantizingTransport:
+    def __init__(self, results):
+        self.connected = True
+        self.armed_generation = 77
+        self.results = list(results)
+        self.send_calls = 0
+        self.close_calls = 0
+        self.stop_calls = 0
+
+    def send_twist(self, *_args, **_kwargs):
+        self.send_calls += 1
+        result = self.results.pop(0)
+        if result is None:
+            self.stop_calls += 1
+            self.armed_generation = None
+        return result
+
+    def close(self, **_kwargs):
+        self.close_calls += 1
+        self.connected = False
+
+
+def make_runtime_bridge(module, transport):
+    clock = lambda: 10.0
+    bridge = module.RoombaBridgeTcp.__new__(module.RoombaBridgeTcp)
+    bridge.transport = transport
+    bridge.command_state = module.CommandState(True, 0.5, clock)
+    bridge.drive_session_limiter = module.DriveSessionLimiter(0.4, clock)
+    bridge.drive_session_limiter.arm()
+    bridge.watchdog_test_state = module.WatchdogTestCommandState(0.75, clock)
+    bridge.safe_gate = module.SafeModeGate()
+    bridge.safe_gate.establish(7, 0, 0, 2)
+    bridge.latency_trace = FakeTrace()
+    bridge.watchdog_test_mode = False
+    bridge.drive_enabled = True
+    bridge.disabled_rejection_logged = False
+    bridge.command_topic = "/roomba/cmd_vel_unstamped"
+    bridge.next_safe_check = 1.0e12
+    bridge.next_retry = 0.0
+    bridge.arm_deadline = 20.0
+    bridge.idle_stop_sent = False
+    bridge.bounded_drive_rejection_logged = False
+    bridge.watchdog_preflight_logged = False
+    bridge.wheel_base = 0.235
+    bridge.max_speed_mm_s = 20
+    bridge.max_drive_session_duration = 0.4
+    bridge.get_logger = lambda: bridge.logger
+    bridge.logger = FakeLogger()
+    return bridge
+
+
+class RoombaBridgeRuntimeTests(unittest.TestCase):
+    def test_bounded_quantized_zero_is_stop_without_reconnect_or_stop_spam(self):
+        module = load_bridge_module()
+        transport = QuantizingTransport([None])
+        bridge = make_runtime_bridge(module, transport)
+        command = module.Twist()
+        command.linear.x = 0.0004
+
+        bridge.on_cmd(command)
+        bridge.tick()
+        bridge.tick()
+
+        self.assertEqual(transport.send_calls, 1)
+        self.assertEqual(transport.stop_calls, 1)
+        self.assertEqual(transport.close_calls, 0)
+        self.assertTrue(transport.connected)
+        self.assertIsNone(transport.armed_generation)
+        self.assertTrue(bridge.idle_stop_sent)
+        self.assertIsNone(bridge.command_state.current())
+        self.assertFalse(
+            any("bounded Drive ACK" in message for _level, message in bridge.logger.messages)
+        )
+
+        ack_transport = QuantizingTransport([12])
+        ack_bridge = make_runtime_bridge(module, ack_transport)
+        ack_command = module.Twist()
+        ack_command.linear.x = 0.02
+        ack_bridge.on_cmd(ack_command)
+        ack_bridge.tick()
+
+        self.assertEqual(ack_transport.close_calls, 0)
+        self.assertFalse(ack_bridge.idle_stop_sent)
+        self.assertTrue(
+            any(
+                "bounded Drive ACK: status=0x03 sequence=12" in message
+                for _level, message in ack_bridge.logger.messages
+            )
+        )
 
 
 class RoombaBridgeTcpIntegrationTests(unittest.TestCase):

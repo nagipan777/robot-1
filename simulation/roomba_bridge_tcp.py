@@ -409,6 +409,14 @@ class RoombaBridgeTcp(Node):
                 max_speed_mm_s=self.max_speed_mm_s,
                 deadline_monotonic=self.drive_session_limiter.deadline,
             )
+            if sequence is None:
+                # A non-zero Twist can quantize to zero wheel speeds.  The
+                # transport has already sent STOP and revoked ARM; keep that
+                # normal STOP outcome instead of formatting None as an ACK.
+                self.clear_command()
+                self.drive_session_limiter.latch_stop()
+                self.idle_stop_sent = True
+                return
             self.idle_stop_sent = False
             if self.drive_session_limiter.enabled:
                 left, right = twist_to_wheel_speeds(
