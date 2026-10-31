@@ -464,6 +464,7 @@ def handle_stop_diagnostic(connection):
 
     if uart_write_exact(STOP):
         status |= STOP_ACK_UART_WRITTEN
+        motion_latch.normal_stop()
         response = query_uart(
             bytes(
                 [
@@ -491,7 +492,8 @@ def handle_oi_mode_diagnostic(connection, stop_first=True):
         # Initial diagnostics remain STOP-first.  The live variant is a fixed
         # sensor-35 query used only while the host is actively supervising
         # motion; it cannot carry an arbitrary OI command or refresh watchdog.
-        uart_write_exact(STOP)
+        if uart_write_exact(STOP):
+            motion_latch.normal_stop()
     response = query_uart(bytes([SENSORS, SENSOR_OI_MODE]), 1)
     if len(response) == 1 and response[0] in (0, 1, 2, 3):
         send_all(

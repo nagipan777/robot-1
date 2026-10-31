@@ -10,6 +10,7 @@ from unittest import mock
 
 
 SOURCE = pathlib.Path(__file__).resolve().parents[1] / "pico" / "pico_relay.py"
+DEPLOYED_SOURCE = pathlib.Path(__file__).resolve().parents[1] / "pico" / "main.py"
 
 
 class FakeUart:
@@ -164,6 +165,16 @@ def load_relay():
 
 
 class PicoRelayProtocolTests(unittest.TestCase):
+    def test_deployed_and_repository_relay_match_except_deployment_comment(self):
+        ignored_comment = "# Set these only on the deployed Pico W. Never commit Wi-Fi credentials."
+
+        def normalized(path):
+            return "\n".join(
+                line for line in path.read_text().splitlines() if line != ignored_comment
+            )
+
+        self.assertEqual(normalized(DEPLOYED_SOURCE), normalized(SOURCE))
+
     def test_uart_write_exact_requires_the_complete_return_count(self):
         frame = b"\x91\x00\x14\x00\x14"
         for result, expected in ((5, True), (4, False), (0, False), (None, False)):
@@ -319,6 +330,67 @@ class PicoRelayProtocolTests(unittest.TestCase):
             + b"\x00\x00\x00\x00",
         )
         self.assertEqual(uart.writes[:3], [relay.STOP, relay.PAUSE_STREAM, query])
+
+    def test_diagnostic_stop_revokes_arm_until_newer_generation_rearms(self):
+        relay, uart = load_relay()
+        relay.ALLOW_NONZERO_DRIVE = True
+        stop_query = bytes(
+            [
+                relay.QUERY_LIST,
+                2,
+                relay.SENSOR_REQUESTED_RIGHT_VELOCITY,
+                relay.SENSOR_REQUESTED_LEFT_VELOCITY,
+            ]
+        )
+        uart.responses[stop_query] = b"\x00\x00\x00\x00"
+        connection = FakeConnection()
+
+        relay.forward_valid_frames(bytearray(self.arm_frame(relay, 70)), connection)
+        relay.forward_valid_frames(
+            bytearray(self.drive_frame(relay, 70, sequence=1)), connection
+        )
+        relay.forward_valid_frames(
+            bytearray([relay.DIAGNOSTIC_MAGIC, relay.DIAGNOSTIC_STOP]), connection
+        )
+        writes_after_stop = len(uart.writes)
+        relay.forward_valid_frames(
+            bytearray(self.drive_frame(relay, 70, sequence=2)), connection
+        )
+
+        self.assertEqual(relay.motion_latch.state, relay.MotionLatch.STOPPED)
+        self.assertEqual(len(uart.writes), writes_after_stop)
+        self.assertEqual(connection.sent[-11], relay.DRIVE_ACK_VALIDATED)
+
+        relay.forward_valid_frames(bytearray(self.arm_frame(relay, 71)), connection)
+        relay.forward_valid_frames(
+            bytearray(self.drive_frame(relay, 71, sequence=1)), connection
+        )
+        self.assertEqual(relay.motion_latch.state, relay.MotionLatch.ARMED)
+        self.assertEqual(uart.writes[-1], bytes([145, 0, 20, 0, 20]))
+
+    def test_stop_first_oi_diagnostic_revokes_arm_but_live_query_does_not(self):
+        relay, uart = load_relay()
+        relay.ALLOW_NONZERO_DRIVE = True
+        oi_query = bytes([relay.SENSORS, relay.SENSOR_OI_MODE])
+        uart.responses[oi_query] = b"\x02"
+        connection = FakeConnection()
+        relay.forward_valid_frames(bytearray(self.arm_frame(relay, 80)), connection)
+        relay.forward_valid_frames(
+            bytearray(self.drive_frame(relay, 80, sequence=1)), connection
+        )
+
+        relay.forward_valid_frames(
+            bytearray([relay.DIAGNOSTIC_MAGIC, relay.DIAGNOSTIC_OI_MODE_LIVE]),
+            connection,
+        )
+        self.assertEqual(relay.motion_latch.state, relay.MotionLatch.ARMED)
+        self.assertEqual(relay.motion_latch.generation, 80)
+
+        relay.forward_valid_frames(
+            bytearray([relay.DIAGNOSTIC_MAGIC, relay.DIAGNOSTIC_OI_MODE]), connection
+        )
+        self.assertEqual(relay.motion_latch.state, relay.MotionLatch.STOPPED)
+        self.assertIsNone(relay.motion_latch.generation)
 
     def test_stop_diagnostic_discards_stale_uart_bytes_before_query(self):
         relay, uart = load_relay()
