@@ -1,721 +1,342 @@
-# robot-1 チュートリアル
+# robot-1 — AI認識とRoomba 680実機Navigation
 
-PAI最終課題のROS 2動画を撮影する場合は、ベースライン、推奨画面配置、トピック確認、段階的な制御有効化、停止手順をまとめた[PAI_SUBMISSION.md](PAI_SUBMISSION.md)を先に確認してください。
+**YOLOでごみを見つけ、ArUcoでRoombaの位置・向きを推定し、ROS 2で移動指令を計算して、Pico W経由でRoomba 680を動かすプロジェクト。**
 
-固定Webカメラでごみを検出し、カメラ画像上の座標をGazeboの床面座標へ変換して、Create 3シミュレーター上で確認するプロジェクトです。
+**[最終レポート初稿](docs/submission_2026/final_report_draft.md)** に、課題、AI、実機動作、動画、残存課題をまとめています。
 
-このチュートリアルでは、次の順番で安全に動作確認します。
+PAI応用講座の最終課題として開発し、2026年10月に動画を提出しました。現在は追加開発として、連続直進・左右旋回・実機オドメトリ・Wi-Fi/TCP遅延への対応を進めています。旧READMEはシミュレーター中心の長いチュートリアルでした。このREADMEでは、**完成済み／実験で確認済み／未達／次の予定**を分け、実験者が現在地を把握できることを優先します。
 
-1. シミュレーターを起動する
-2. 既知の床座標にテスト用Markerを表示する
-3. Webカメラ画像と`/odom`座標を校正する
-4. YOLOの検出結果をROS 2へ送る
-5. 変換後のごみ座標をRVizとログで確認する
+> **最終整理日：2026-10-30。** GitHubで直接確認できる基盤は主に\`fix-arm-ack-session-recovery\`ブランチです。10月30日のC3追加試験は、利用者が共有したローカル実験報告書に基づいて追補しました。最新のC3作業ブランチ・生ログはこのGitHub基準ブランチ上では未確認のため、**報告された実測とGitHub上で再現可能な実装を同一視しません。**
 
-> [!IMPORTANT]
-> 自動走行は初期状態で無効です。座標対応を確認するまで、`simulation/vision_controller.yaml`の`control_enabled`と`calibration_ready`を`false`のままにしてください。検出が途切れた場合や古いデータを受け取った場合も、ロボットは停止する設計です。
+## 目次
 
-## 1. 構成
+1. [目標](#1-目標) / 2. [現在の達成状況](#2-現在の達成状況) / 3. [全体構成](#3-全体構成)
+4. [AI推論と制御](#4-ai推論と制御) / 5. [画像認識・カメラ較正](#5-画像認識カメラ較正)
+6. [実機統合の到達点](#6-実機統合の到達点) / 7. [通信・安全制御](#7-通信安全制御)
+8. [C3連続走行](#8-c3連続走行) / 9. [オドメトリ](#9-オドメトリ)
+10. [環境と再現手順](#10-環境と再現手順) / 11. [運用上の課題](#11-運用上の課題)
+12. [実装予定・優先順位](#12-実装予定優先順位) / 13. [資料・ファイル一覧](#13-資料ファイル一覧)
+14. [証拠の扱い](#14-証拠の扱い)
 
-固定WebカメラとYOLOはMac側、ROS 2・Gazebo・Create 3はColima/Docker側で動きます。
+---
 
-```text
-Webカメラ → vision.py → HTTP → /webcam/detections
-                                      ↓
-                         /litter/target_odom ─┐
-                                             ├→ map_frame_adapter
-                                      /odom ─┘        │
-                              /robot/pose (map) ──────┤
-                            /litter/target (map) ─────┘
-                                             ↓
-                                vision_turn_controller
-                                             ↓
-                             /cmd_vel_unstamped
-                                      ↓
-                        TwistStamped relay → Create 3 / Gazebo
-```
+## 1. 目標
 
-プロセス境界、全トピック、座標系、安全条件、シミュレーターと実機の差し替え方は[ARCHITECTURE.md](ARCHITECTURE.md)にまとめています。
+目指しているのは、床面の対象を検出してから、その方向へ旋回・前進し、姿勢を更新しながら近づき、到達条件で停止する一連の**閉ループNavigation**です。
 
-現在のごみ表示は`visualization_msgs/msg/Marker`を使った**RViz上の可視化**です。Gazebo内に物理的なごみモデルを生成する機能ではありません。シミュレーターでの「吸引」は、目標から15 cm以内に入ったとき`/litter/reached`が`true`になる到達判定として扱います。
+\`\`\`text
+カメラで検出 → ごみ位置を推定 → Roombaの姿勢を知る
+      → 進行方向を計算 → 左右車輪を動かす
+      → 姿勢と目標距離を更新 → 停止
+\`\`\`
 
-## 2. 必要なもの
+すでにAI認識から実機の左右車輪を動かすところまでは結合できました。ただし、**ゴミへの連続接近・自律到達・吸引完了**は実機で未達です。無人運転にも進んでいません。RoombaのOpen Interface（OI）を用いる研究・学習用の実装であり、市販ロボット掃除機としての安全保証を主張するものではありません。
 
-- Apple Silicon Mac
-- 固定できるWebカメラ
-- Python 3
-- Docker CLIとColima
-- 4 GB以上の空きメモリ
-- 初回セットアップ時のインターネット接続
+最終課題提出時の範囲と、提出後の追加実験は区別します。シミュレーションPASSは実機PASSではなく、通信成功は実距離の証明でもありません。
 
-コマンドが使えることを確認します。
+## 2. 現在の達成状況
 
-```bash
-python3 --version
-docker --version
-colima version
-```
+| 機能 | 状態 | 検証内容 |
+|---|---|---|
+| Create 3／Gazebo Navigation | **シミュレーションPASS** | 旋回、接近、到達、停止 |
+| YOLOでの実画像検出 | **限定PASS** | 固定環境・前方60〜80cm |
+| ArUco ID 0の実カメラ位置推定 | **較正／非走行PASS** | map座標の位置・yaw候補 |
+| YOLO→ROS 2 Navigation | **非走行PASS** | Twist生成、検出途絶STOP |
+| AI→Pico→Roomba | **有人単発PASS** | 10/28、左右20/20mm/s、STOP |
+| ARM ACK消失への修正 | **限定実機PASS** | ARM送信ロジックの修正、Pico試験 |
+| host deadline対策 | **一部実機PASS** | ACK待ち中断→STOP。ただし厳密STOP開始時刻未保存 |
+| C3：1秒超の同一ARM継続Drive | **10/30報告上PASS** | ACK seq 1〜22 |
+| C3：直進距離 | **距離条件PASS** | 実測56mm、許容40〜80mm |
+| C3：規定時間の通信連続性 | **FAIL** | seq 23はwatchdog STOP後に到着 |
+| C3：ACK再同期 | **報告上PASS** | STOP後の実行済みsequence照合 |
+| Navigation左右旋回・目標到達 | **未完了** | 実機で旋回角・距離・再現性が必要 |
+| \`/roomba/odom\` | **dry-run E2E PASS** | CSV encoder→ROS 2 Odometry |
+| 実機encoder 43/44 | **未統合** | Pico→ROS 2データ経路が未完成 |
+| 長時間・無人自律走行 | **未検証** | 有人限定試験とは別 |
 
-## 3. リポジトリとPython環境を準備する
+C3の実走行56mmは重要な成果ですが、それだけでC3の連続通信条件までPASSにはしません。同様に、停止が成功したことを、厳密な停止保証の一般化には使いません。
 
-```bash
+## 3. 全体構成
+
+Macの\`vision.py\`がカメラ画像を読み、Colima/Docker内のROS 2が目標・姿勢・速度を計算し、Pico Wが唯一のUART所有者としてRoombaへDrive Directを送ります。
+
+\`\`\`text
+[固定USBカメラ 800×600]
+          │
+          ▼
+[Mac：vision.py]
+   YOLO物体検出 ＋ OpenCV ArUco検出
+          │ HTTP検出JSON
+          ▼
+[Colima / Docker：ROS 2 Jazzy]
+   webcam_bridge → /webcam/detections
+         ├─ 床面目標 → /litter/target
+         └─ ArUco姿勢 → /robot/pose
+                       │
+             vision_turn_controller
+                       │ /nav/cmd_vel_unstamped
+                       ▼
+             cmd_vel_output_adapter
+                       │ /roomba/cmd_vel_unstamped
+                       ▼
+                roomba_bridge_tcp
+             ARM・STOP・ACK・期限
+                       │ TCP/Wi-Fi
+                       ▼
+                 [Pico W]
+           単一UART／走行許可・監視
+                       │ Roomba OI
+                       ▼
+                 [Roomba 680]
+                   左右車輪
+\`\`\`
+
+シミュレーションでは、出力先をCreate 3/Gazeboへ切り替えます。実機／Gazebo／dry-runを混同せず、実機出力とシミュレーターの速度指令が同時に有効にならない構成を維持します。
+
+| 主要トピック | 用途 |
+|---|---|
+| \`/webcam/detections\` | 検出JSON、画像上のbbox・confidence |
+| \`/litter/target\` | map座標のごみ目標 |
+| \`/robot/pose\` | map座標のRoomba姿勢 |
+| \`/nav/cmd_vel_unstamped\` | NavigationのTwist候補 |
+| \`/roomba/cmd_vel_dry_run\` | 非走行の出力確認 |
+| \`/roomba/cmd_vel_unstamped\` | 実機ブリッジ入力 |
+| \`/roomba/arm_generation\` | 明示的ARM要求 |
+| \`/roomba/encoder_counts\` | encoder入力（現在は主に模擬） |
+| \`/roomba/odom\` | 差動二輪Odometry（実値未接続） |
+
+詳細は[ARCHITECTURE.md](ARCHITECTURE.md)、[LOCALIZATION_ARCHITECTURE.md](LOCALIZATION_ARCHITECTURE.md)を参照してください。
+
+## 4. AI推論と制御
+
+**今回の学習済みAI推論は、Mac上のYOLOが担当します。** YOLOはカメラ画像から「対象がどこにあるか」をbboxと信頼度で返します。ArUcoはOpenCVによるマーカー検出と幾何変換、Navigationは座標差・角度差に基づく速度計算です。Pico WもAI推論は行わず、Drive/STOPの通信と走行許可を扱います。
+
+- **YOLO**：床の対象を検出する画像認識モデル。
+- **ArUco**：Roomba上のID 0を認識し、固定カメラから姿勢を推定。
+- **Navigation**：目標と現在姿勢から、前進するか旋回するかを計算。
+- **Pico W**：ARM状態、connection ID、Drive sequence、UART書込みとSTOPを管理。
+
+SmolVLA等のVLAが直接ロボット行動を推論する方式とは違い、ここでは**AI物体認識＋古典的なロボット制御**を統合しています。
+
+\`vision_turn_controller.py\`には\`turn_only\`と\`approach\`があり、目標方向から大きくずれていれば旋回し、向きが合えば低速前進する設計です。ただし、実機の20mm/s上限ではシミュレーターより旋回速度が制約されるため、実旋回角の定量評価と制御ゲインの調整は今後の課題です。
+
+## 5. 画像認識・カメラ較正
+
+### YOLOの学習と運用条件
+
+TACOから学習を開始し、Gazebo画像や実環境の負例を加えました。Roomba本体、黄色いテープ、床面の背景を誤ってゴミと認識する問題があり、hard-negativeで対処しています。
+
+2026-10-28の実カメラ実験では、位置違いに対応したv2候補を使用しました。
+
+\`\`\`text
+weights: runs/detect/real_finetune/weights/best_position_v2_20261028.pt
+SHA256: 3e1de3c72c6d807fd527cefc6b70801275e3a9b54bb9daa8d87a59dc7be12b03
+camera: 800×600 / confidence: 0.50 / imgsz: 960
+\`\`\`
+
+確認できたのは固定環境の前方60〜80cm程度での検出です。100cm付近では途切れがあり、未知のごみや一般環境の高精度検出までは主張しません。モデル重みはGitHubに存在しない場合があるため、ローカルでパスとSHA256を照合してください。
+
+### ArUcoと床面投影
+
+使用したのは\`DICT_4X4_50\`のID 0、黒枠外辺80mm。実験室の固定カメラ高さ0.53m、マーカー面高さ0.12m。チェッカーボード7画像の内部較正RMSは0.7438px、床面6点の当てはめRMSEは0.0193m、独立検証2点の誤差は0.0427mと0.0243mでした。
+
+これは**固定カメラ・固定配置における座標投影の検証**で、どこでも同じ位置精度が得られるという保証ではありません。カメラ位置や画角を変えれば再較正が必要です。詳しくは[カメラ較正記録](docs/CAMERA_CALIBRATION_20261028.md)を参照してください。
+
+### 非走行で確認したこと
+
+実カメラからROS 2へ検出を送り、Navigation候補を生成。マスクを取り除くとSTOPし、ArUcoが見えなくなった場合も非ゼロ出力を止めます。同じ目標を再表示しても自動的には再発進しません。この\`SafeTargetManager\`の保守的な挙動は、短時間の有人試験には合いますが、継続的なごみ接近では再認識と再開認可を分離して検討する必要があります。
+
+## 6. 実機統合の到達点
+
+### 10月28日：AI連動実機
+
+実カメラのYOLOとArUcoからNavigationの前進指令を出し、明示ARM後にRoombaへ左右20/20mm/sを送信しました。PicoではDrive sequence 1〜7を確認。最初のDriveから通常STOPまで289ms。立会者は短時間前進と物理停止、異音なし、再発進なしを確認しました。
+
+これが**「AI連動実機統合PASS（限定有人単発）」**の根拠です。一連の自律接近・ゴミ回収に成功したという意味ではありません。一次証拠は[10月28日試験JSON](artifacts/step41/ai_attended_floor_trial_20261028.json)です。
+
+### 10月29日：deadline障害と修正
+
+旧20Hz監視ではホストSTOPが約41ms遅延。100Hz timerへ変更しても、同期Safe照会やDrive ACK待ちがsingle-threaded executorを約181ms塞ぐ問題がありました。TCP STOPの送信処理自体は主因ではありませんでした。
+
+同一TCP所有者が応答待ち途中で絶対期限を監視し、期限到達時にSTOP・ARM失効・接続破棄する方式に変更しました。有人両輪浮上試験でPicoのDrive→STOP 224ms、STOP後Drive 0件、物理停止と再発進なしを確認。
+
+ただし、その試行ではホスト側STOP送信開始の厳密なtraceを保存していません。後続エラーログは開始から400.734msでしたが、それをSTOP開始時刻とはみなしません。ログ改善コードは回帰PASS、改善後の追加実機走行は未実施です。[期限修正報告](P3_2_DEADLINE_IO_SEPARATION_REPORT_20261029.md)。
+
+## 7. 通信・安全制御
+
+### RoombaとPico
+
+Pico Wを介してRoomba OIへUARTで接続します。現行経路はGP4 TX・GP5 RXと共通GND、電圧レベル変換器を使用。BRC自動起床は使わず、CLEAN手動起床を採用しています。初期のUSB-UART直接接続や19200bpsの実験を、現在のPico W/TCP運用と混同しません。
+
+### ARMとDrive
+
+走行前にARM generationを明示的に承認し、PicoはTCP connection IDとDrive sequenceも確認します。STOP後に古いARMや未確定Driveを使い回す設計ではありません。非ゼロDriveには別途許可が必要で、待機時の\`ALLOW_NONZERO_DRIVE=False\`を基本とします。
+
+提出時点の短時間モードは20mm/s、ホスト/Picoの400msセッション上限、更新途絶500ms watchdog、STOPラッチを持ちます。**C3は別の限定連続走行モード**であり、通常モードの制限を黙って延長したものではありません。
+
+### ARM ACKの障害
+
+旧Picoでは、MicroPythonの\`socket.send()\`がノンブロッキング動作で\`None\`を返した際、残りバイトの送信が完了したと誤認していました。ACK 0/7byte障害の再現後、全バイト送信、\`ARM_PENDING\`、ACK送信完了後commit、接続ID拘束へ修正しました。修正版の実Picoロック診断は10/10 PASSです。
+
+### STOPと観測
+
+STOP ACK \`0x07\`はPicoによるSTOP要求検証・UART書込み・Roomba要求車輪速度0を示します。ただし、物理的に車輪が止まったかは別の確認です。Wi-Fiが切れた場合に最後の速度指令を保持し続けないよう、Picoの独立停止監視を用います。一方で**Pico自体が停止・無通電になった際の物理停止を、その監視だけで保証することはできません**。
+
+通信の信頼性と停止機構の有効性は分けて判定します。
+
+## 8. C3連続走行
+
+> ここは2026-10-30に提供されたローカル報告書の追補です。最新のC3コードとログがGitHubに反映されたかは未確認です。該当コミットが確認できた後に実行コマンドとリンクを追加します。
+
+C3の目標は400ms単発を越え、同一ARMで1秒超のDriveを連続送信し、60mm前後の直進を計測することです。試験条件は左右20/20mm/s、指令2.8秒、固定期限3.0秒、通信watchdog 500ms、Drive再送なし、自動再ARMなし。距離の暫定許容帯は40〜80mm。
+
+| 試験 | 1回目 | 2回目 |
+|---|---:|---:|
+| 正常Drive ACK | seq 1〜2 | seq 1〜22 |
+| 次のDrive | seq 3拒否 | seq 23拒否 |
+| 距離実測 | 26mm | **56mm** |
+| 距離40〜80mm | FAIL | **PASS** |
+| 同一ARMで1秒超 | 未達 | **PASS** |
+| 全指令区間の通信継続 | FAIL | **FAIL** |
+| 物理停止・再発進なし | PASS | PASS |
+
+1回目は走行中の同期Safe照会がDrive更新を阻害。限定連続試験では、走行前に確認したSafe結果を使い、走行区間の同期ライブ照会を分離しました。その結果、2回目はACK 22件を確定し、56mm進みました。
+
+しかしseq 23は最終Driveから約619ms後にPicoへ到着し、500ms watchdogですでにSTOPラッチされていたため拒否されました。seq 22のACKをホストが待った時間は310.911msで、ACK確定からseq 23送信まで4.539ms、ホスト\`sendall\`は0.174ms。遅延はTCP/Wi-Fi経路のどこかにありますが、同一床面試験のパケットキャプチャがなく、AP・CYW43/lwIP・macOSのどこかは断定できません。
+
+また別試験で、未確定ACKについてSTOP後にboot ID・generation・sequenceを台帳照合する機能を実機検証したとの報告があります。**これは実行結果の再同期であり、通信遅延中に走行を続けられる能力ではありません。**
+
+C3の結論は、**移動距離と一度のARMでの1秒超駆動はPASS、予定した通信連続性はFAIL**です。どちらも記録して次の改善に使います。
+
+## 9. オドメトリ
+
+\`odometry.py\`、\`simulation/odometry_dryrun_core.py\`、\`simulation/wheel_odometry_node.py\`には差動二輪オドメトリの計算があり、左右エンコーダ値からx・y・yaw・速度を積分します。16bit wraparound、入力欠損、異常ジャンプ、通信断後の再基準化を扱います。
+
+\`\`\`text
+CSV replay（模擬）
+ → /roomba/encoder_counts
+ → wheel_odometry_node
+ → /roomba/odom（nav_msgs/Odometry）
+ → CSV保存・RViz・ArUco模擬比較
+\`\`\`
+
+\`./simulation/sim.sh odometry-dryrun-e2e\`で、ROS 2ノード間のdry-run E2Eを確認しています。入力6件のうち有効Odometry5件で、timeout入力は姿勢へ積分しません。模擬ArUco比較がほぼ誤差0でも、実機位置精度を示す数値ではありません。
+
+**未完成なのは実機データの入口です。** OI packet 43・44の左右encoder値をPico Wで取得し、単一UART所有者を保ったままTCP→ROS 2の\`/roomba/encoder_counts\`へ送る経路は未統合。STOP監視をセンサー照会でブロックしないよう、最初は静止時の読み取りから検証します。Navigationの姿勢入力は当面ArUcoのままとします。
+
+## 10. 環境と再現手順
+
+### 利用環境
+
+Apple Silicon Mac、Python 3、Docker、Colima、ROS 2 Jazzy、Gazebo Harmonic、Create 3。実カメラ用のUSBカメラとYOLO重みが必要です。実機試験にはPico W、レベル変換器、Roomba 680を使用します。
+
+\`\`\`bash
 git clone https://github.com/nagipan777/robot-1.git
 cd robot-1
-
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install --upgrade pip
-pip install ultralytics opencv-python numpy pillow
-```
-
-学習データと学習済み重みは容量が大きいため、GitHubには含まれていません。YOLOを使うには、学習済み重みを次の場所へ置いてください。
-
-```text
-runs/detect/taco/weights/best.pt
-```
-
-重みをまだ作っていない場合は、TACOデータセットから学習できます。
-
-```bash
-source .venv/bin/activate
-python prepare_taco.py
-yolo detect train model=yolo26n.pt data=taco_dataset/data.yaml epochs=40 imgsz=640 device=mps name=taco
-```
-
-学習の詳細は[TACO.md](TACO.md)を参照してください。
-
-## 4. シミュレーターを起動する
-
-リポジトリのルートで実行します。
-
-```bash
-./simulation/sim.sh up
-```
-
-初回はColima VMとDockerイメージを準備するため時間がかかります。起動後、ブラウザで次を開きます。
-
-<http://localhost:6080/vnc.html?autoconnect=true&resize=scale>
-
-Gazeboの固定RGBカメラを確認する場合は、通常ワールドとは別のカメラ付きワールドを起動します。
-
-```bash
-./simulation/sim.sh camera-up
-./simulation/sim.sh camera-status
-```
-
-VNC内の`rqt_image_view`へ`/sim/fixed_camera/image_raw`が自動表示されます。通常の`./simulation/sim.sh up`ではカメラ関連プロセスは起動しません。
-`camera-up`のときだけ、同じ画像をMacのlocalhostへMJPEG配信します。
-
-```bash
-# 配信状態の確認
-curl http://127.0.0.1:8766/health
-
-# 仮想固定カメラをYOLO入力にして、従来と同じ検出JSONを送信
-source .venv/bin/activate
-python vision.py \
-  --video-url http://127.0.0.1:8766/stream.mjpg \
-  --weights datasets/PAI_output/best.pt \
-  --confidence 0.25 \
-  --http-timeout 2.0
-```
-
-実Webカメラへ戻す場合は`python vision.py --camera 0`を使います。入力切り替えでROS 2側を再ビルド・再起動する必要はありません。MJPEGポート8766はDockerからMacの`127.0.0.1`だけへ公開され、LANには公開されません。
-
-8 GB MacでGazeboとYOLOを同時実行するとMJPEGのフレーム間隔が長くなる場合があります。
-自律走行試験では、同じ固定カメラの安定したスナップショット入力を使用します。
-
-```bash
-./simulation/sim.sh vision-integration-up
-./simulation/sim.sh litter-add can 0.5 0.5
-
-.venv/bin/python vision.py \
-  --video-url http://127.0.0.1:8766/snapshot.jpg \
-  --weights datasets/PAI_output/best.pt \
-  --confidence 0.25 \
-  --http-timeout 6.0 \
-  --quiet
-
-# 別ターミナル。安全確認後だけ一時的に制御を有効化し、終了時に無効へ戻す。
-./simulation/sim.sh yolo-navigation-test
-```
-
-結果は`artifacts/yolo_navigation_test/result.json`へ保存されます。通常起動の
-`control_enabled=false`と`calibration_ready=false`は変更しません。
-
-`datasets/PAI_output/best.pt`はTACO+Gazebo混合学習モデルです。Gazebo固定testでは
-`confidence=0.25`で背景偽陽性0件/枚でした。実写TACO testでは元モデルより性能が低下したため、
-実Webカメラでは従来モデルを既定のまま維持しています。明示する場合は
-`--weights runs/detect/taco/weights/best.pt --confidence 0.5`を指定してください。
-評価の再実行は`.venv/bin/python validate_pai_output.py`で行い、結果は
-`artifacts/pai_output_validation/`へ保存されます。
-
-### 仮想ゴミと仮想カメラ校正
-
-`camera-up`の起動後、視覚確認用の仮想ゴミを配置・移動・削除できます。モデルはカメラ検証専用のvisual-onlyモデルで、Create3の衝突判定には影響しません。
-
-```bash
-./simulation/sim.sh litter-add can 1.5 -0.7
-./simulation/sim.sh litter-move paper 1.0 1.0
-./simulation/sim.sh litter-add bottle 1.5 -0.7
-./simulation/sim.sh litter-remove
-```
-
-種類を省略した従来形式は空き缶として扱います。比較対象は`can`、`paper`、`bottle`です。
-
-既存YOLOモデルを再学習せず評価し、生画像、注釈画像、検出JSONを保存します。
-
-```bash
-source .venv/bin/activate
-python evaluate_sim_litter.py
-```
-
-3種類を背景画像と同一条件で比較し、検出枠、confidence、正解領域とのIoUを保存する場合は次を実行します。既存の重み、confidence閾値0.5、校正値は変更しません。
-
-```bash
-python compare_sim_litter.py
-```
-
-結果は`artifacts/sim_litter_comparison/results.{json,md}`と種類別の画像へ保存されます。今回の固定条件では、空き缶と紙の検出は正解領域とのIoUが0.02未満で背景由来の偽陽性、ボトルは未検出でした。このため、3種類とも再学習なしで認識可能とは判定していません。
-
-仮想カメラの校正は、床面上のマゼンタ色マーカーを既知位置へ順番に配置して画素中心を測ります。4点を行列計算、別の3点を誤差検証に使用します。
-
-```bash
-python collect_sim_camera_points.py
-python calibrate_sim_camera.py
-```
-
-結果は`simulation/vision_controller.sim_camera.yaml`だけへ保存されます。実Webカメラ用の`simulation/vision_controller.yaml`は変更しません。校正値を書き込んだ後も`control_enabled=false`と`calibration_ready=false`を強制的に維持します。
-
-提出動画用にGazeboを左、RVizを右へ自動配置します。新しい室内ワールド、走行軌跡、進行方向、目標線、速度と状態の文字表示も自動で有効になります。
-
-```bash
-./simulation/sim.sh presentation-layout
-```
-
-表示の意味は、シアンが軌跡と進行方向、オレンジが目標までの線と未到達目標、緑が到達済み目標です。表示ノードは購読とMarker配信だけを行い、速度指令は生成しません。
-
-VNC内ではGazeboとRVizが別ウィンドウで動きます。必要に応じて`Alt+Tab`で切り替えてください。状態とログはMac側の別ターミナルから確認できます。
-
-```bash
-./simulation/sim.sh status
-./simulation/sim.sh logs
-```
-
-## 5. 既知の床座標をRVizで確認する
-
-YOLOと校正をつなぐ前に、Markerの表示経路だけを確認します。
-
-```bash
-./simulation/sim.sh test-marker
-```
-
-RVizで次を確認してください。
-
-- Fixed Frame: `odom`
-- Markerトピック: `/litter/target_marker`
-- 表示位置: `odom (1.5, 0.0)`
-- 表示内容: 緑色の球
-
-確認できたら、`test-marker`を実行したターミナルで`Ctrl+C`を押します。Gazebo画面に球が出ないのは正常です。このMarkerはRViz専用です。
-
-## 6. 固定Webカメラと床面を校正する
-
-校正中は`vision.py`を終了して、カメラを解放してください。同じWebカメラを同時に2つのプログラムから開くことはできません。
-
-```bash
-source .venv/bin/activate
-python calibrate_floor.py --camera 0 --no-yolo
-```
-
-画面に表示される案内に従い、固定カメラ画像上の作業エリアを次の順にクリックします。
-
-| 順番 | 画像上の位置 | 対応する`odom`座標 |
-|---:|---|---:|
-| 1 | 左上 | `(2.5, 1.0)` |
-| 2 | 右上 | `(2.5, -1.0)` |
-| 3 | 右下 | `(0.5, -1.0)` |
-| 4 | 左下 | `(0.5, 1.0)` |
-
-この範囲は、原点付近のロボットと`(0.157, 0)`付近のドックを避けた仮想作業エリアです。
-
-4点をクリックした後、4点とは独立に実測した中央点`odom (1.5, 0.0)`を5回目にクリックします。ターミナルへ独立検証点の誤差が表示され、その後に保存できます。
-
-- `S`: ホモグラフィと画像解像度を保存
-- `R`: 最初からやり直す
-- `Q`または`Esc`: 保存せず終了
-
-別のカメラを使う場合は`--camera 1`のように番号を変更します。YOLO表示なしで校正する場合は`--no-yolo`を追加します。
-
-```bash
-python calibrate_floor.py --camera 1
-python calibrate_floor.py --camera 0 --no-yolo
-```
-
-保存先は`simulation/vision_controller.yaml`です。単位行列は有効な校正として扱われません。また、保存後も安全フラグは自動的に有効になりません。
-
-独立検証点の誤差は、画像座標から床面座標への変換誤差です。YOLOの物体位置推定やロボット自己位置推定を含むシステム全体の位置精度を表すものではありません。
-
-自己写り誤検出に対する第一段階の安全策として、同じ`map`座標系に変換された目標がロボット姿勢から`robot_guard_radius`以内なら`robot_proximity`として拒否します。姿勢が未取得、または`max_robot_pose_age`より古い場合も目標を拒否します。近傍の本物のゴミも除外されるため、これは最終的な認識対策ではありません。
-
-TODO: Roomba自身をラベルなしの負例として学習データへ追加し、データ構成・クラス設計を見直して自己写り誤検出の根本原因へ対処する。
-
-保存した設定をコンテナへ反映するため、シミュレーターを再起動します。
-
-```bash
-./simulation/sim.sh down
-./simulation/sim.sh up
-```
-
-## 7. YOLO検出をROS 2へ送る
-
-Mac側の別ターミナルで実行します。
-
-```bash
-cd /path/to/robot-1
-source .venv/bin/activate
-python vision.py --camera 0
-```
-
-映像ウィンドウも表示する場合は次を使います。
-
-```bash
-python vision.py --preview
-```
-
-`vision.py`は既定でシミュレーターの`http://127.0.0.1:8765/detections`へ検出JSONを送ります。送信せずカメラとYOLOだけを確認する場合は、空の送信先を指定します。
-
-```bash
-python vision.py --simulator '' --preview
-```
-
-カメラ付きワールドの映像を使う場合は、`camera-up`後に入力URLだけを変更します。検出JSONの形式と送信先は実Webカメラの場合と同じです。
-
-```bash
-python vision.py --video-url http://127.0.0.1:8766/stream.mjpg
-```
-
-## 8. ROS 2トピックと変換座標を確認する
-
-シミュレーターのコンテナへ入ります。
-
-```bash
-./simulation/sim.sh shell
-```
-
-まず、検出JSONが届いていることを確認します。
-
-```bash
-ros2 topic info /webcam/detections
-ros2 topic echo /webcam/detections
-```
-
-続いて、変換後の目標点、Marker、到達判定を確認します。
-
-```bash
-ros2 topic echo /litter/target
-ros2 topic info /litter/target_marker
-ros2 topic echo /litter/reached
-```
-
-RVizでは`/litter/target_marker`にオレンジ色の球が表示されます。YOLOのごみ中心を動かしたとき、Markerが校正した床面内の対応位置へ移動することを確認してください。変換ログはMac側からも確認できます。
-
-```bash
-./simulation/sim.sh logs
-```
-
-校正時と運用時で画像解像度が異なる場合、変換結果は安全のため破棄されます。カメラの位置・向き・高さ・画角を変えた場合も、必ず再校正してください。
-
-## 9. シミュレーターで目標追従を確認する
-
-追従制御は`map`座標系の`/litter/target`と`/robot/pose`を購読し、`/cmd_vel_unstamped`へ速度指令を送ります。最初に旋回だけを確認し、問題がなければ低速前進へ切り替えます。実機では実行しないでください。
-
-最初のターミナルでYOLOを動かし、障害物のない床面にごみを置きます。
-
-```bash
-source .venv/bin/activate
-python vision.py --quiet
-```
-
-別のターミナルでROS 2ノード、主要トピック、現在の安全パラメータを確認します。
-
-```bash
-./simulation/sim.sh ros-status
-```
-
-校正結果が正しいことを確認した後、旋回だけを明示的に有効化します。このコマンドは最初に制御を無効化してから、`calibration_ready=true`、`turn_only`、`control_enabled=true`の順に反映します。
-
-```bash
-./simulation/sim.sh control-turn
-```
-
-### 9.1 旋回だけを確認する
-
-`turn_only`では`linear.x`を常に0に保ち、目標方向への旋回だけを行います。別のコンテナシェルで指令を確認できます。
-
-```bash
-ros2 topic echo /cmd_vel_unstamped
-```
-
-次を確認してください。
-
-- `linear.x`が常に`0.0`
-- ごみを左右へ動かすと`angular.z`の符号が変わる
-- ロボットが目標方向を向くと`angular.z`が`0.0`になる
-- ごみを画面から外すと、1秒以内にゼロ速度になる
-
-### 9.2 障害物のない範囲で低速前進する
-
-旋回確認後、ロボットから目標までの直線上にドックや障害物がないことをGazeboで確認します。その後、制御モードだけを切り替えます。
-
-```bash
-./simulation/sim.sh control-approach
-```
-
-`approach`では、目標との向きのずれが0.15 rad以内のときだけ、最大0.08 m/sで前進します。向きが大きくずれた場合は前進せず、旋回を優先します。目標から15 cm以内へ入ると停止し、次が`true`になります。
-
-```bash
-ros2 topic echo /litter/reached
-```
-
-### 9.3 停止する
-
-通常停止では、別のコンテナシェルで先に速度指令を監視します。
-
-```bash
-ros2 topic echo /cmd_vel_unstamped
-```
-
-その状態で、制御を実行しているシェルから無効化します。ノードがゼロ速度を送信したことを監視側で確認し、`Ctrl+C`で監視を終了します。
-
-```bash
-./simulation/sim.sh control-off
-```
-
-`control-off`は制御を無効化した後、ゼロ速度を1回配信します。緊急時にコンテナ内から直接ゼロ速度を送る場合は次を使えます。
-
-```bash
-ros2 topic pub --once /cmd_vel_unstamped geometry_msgs/msg/Twist '{}'
-```
-
-`/litter/target`または`/robot/pose`が1秒より古くなった場合、検出が消えた場合、目標へ到達した場合、ノード終了時にもゼロ速度を送ります。
-
-## 10. ロボットを手動で動かす
-
-自動走行を有効にせず、キーボード操作で座標と到達判定を確認できます。
-
-```bash
-./simulation/sim.sh teleop
-```
-
-操作方法はターミナルに表示されます。ごみ目標へ15 cm以内まで近づくと、`/litter/reached`が`true`になります。
-
-## 11. 終了する
-
-カメラ画面では`q`を押して終了します。シミュレーターは用途に応じて停止します。
-
-```bash
-./simulation/sim.sh down  # コンテナを停止・削除し、イメージは保持
-./simulation/sim.sh stop  # コンテナと専用Colima VMを停止
-```
-
-## トラブルシューティング
-
-### `/webcam/detections`がpublishされていない
-
-次の順に確認します。
-
-1. `./simulation/sim.sh up`を先に実行したか
-2. `vision.py`がカメラを認識しているか
-3. `vision.py`の送信先が`http://127.0.0.1:8765/detections`か
-4. YOLOが`litter`を検出しているか
-5. `./simulation/sim.sh logs`に受信エラーがないか
-
-トピックが一覧にあっても、Publisherがまだ送信していないと`ros2 topic echo`で型を特定できない場合があります。`vision.py`を起動して検出を発生させてから再確認してください。
-
-### カメラを開けない、最初のクリックが反応しない
-
-- `vision.py`など、カメラを使用中の別プロセスを終了する
-- 校正画面を一度クリックしてフォーカスを移す
-- `--camera 1`など別のカメラ番号を試す
-- macOSの「プライバシーとセキュリティ」でターミナルのカメラ権限を確認する
-
-### Markerが表示されない
-
-- GazeboではなくRVizウィンドウを開く
-- RVizのFixed Frameを`odom`にする
-- `/litter/target_marker`をMarker表示へ設定する
-- `ros2 topic info /litter/target_marker`でPublisher数を確認する
-- まず`./simulation/sim.sh test-marker`で既知点を確認する
-
-### 変換後の座標がおかしい
-
-- クリック順が「左上、右上、右下、左下」だったか確認する
-- カメラが校正後に動いていないか確認する
-- 校正時とYOLO実行時の画像解像度をそろえる
-- `R`で校正をやり直し、四隅と中央の結果を保存前に確認する
-- 保存後にシミュレーターを再起動する
-
-## 実機へ移行するとき
-
-シミュレーターでは`/odom`を数値変換し、`map`座標系の`/robot/pose`（`geometry_msgs/msg/PoseStamped`）として制御へ渡します。ごみ位置も同じ変換を通った`/litter/target`（`PointStamped`、frame=`map`）です。
-
-実機ではルンバ上面のArUcoマーカーを固定Webカメラで検出し、同じ`/robot/pose`へ差し替える想定です。画像座標から床面座標への変換と目標計算は共通で利用できます。
-
-### Roomba 680 USB-UARTドライバ
-
-MacとRoomba 680をFLINT FT232RLで接続し、Roomba側TXD→FLINT RXD、Roomba側RXD→FLINT TXD、GNDを共通にします。電圧レベルとMini-DINのピン配置を確認してから接続してください。既定ポートは`/dev/cu.usbserial-A10QJ1R4`、通信は19200 bps、8N1です。
-
-実行前にRoombaの`CLEAN`ボタンを押し、ランプが点灯して本体が起きていることを確認してください。ドライバはFT232RLの安定待ち後にStartを3回送ってからSafeモードを要求します。
-
-```bash
-source .venv/bin/activate
 python -m pip install -r requirements.txt
-python roomba_driver.py
-python roomba_driver.py --port /dev/cu.usbserial-A10QJ1R4
-```
+git rev-parse HEAD
+\`\`\`
 
-既定のCLIはSafeモードを確認して左右エンコーダを読むだけで、車輪を駆動しません。障害物のない場所で本体を床に置き、直ちに停止できる状態を確保した場合だけ、明示的に短時間の走行試験を有効にします。この試験は左右30 mm/sで0.5秒間だけ前進し、終了時にも停止指令を送ります。
+\`main\`は最新の実機開発内容を含まない可能性があります。再現時には使用したブランチとcommit SHA、モデルファイルSHAを明示してください。
 
-実機オドメトリを読み取りだけで確認する場合は、初回値を基準として0.5秒間隔で10回測定します。左右の生値、差分tick、推定姿勢が表示され、受信エラー時は姿勢を更新せず中断します。
+### シミュレーション（Macから）
 
-```bash
-python roomba_driver.py --odom-test
-```
-
-```bash
-python roomba_driver.py --drive-test
-```
-
-`RoombaDriver`の速度上限は既定で±50 mm/sです。OI Safeモード（センサID 35）が確認できなければ走行を拒否し、通信エラー、監視タイムアウト、`close()`、context manager終了時には可能な範囲で停止指令を送ります。Safeモードの車輪落下・崖検出等の保護は無効化しません。
-
-ただし、Drive Directの速度指令はホストプロセスが停止すると更新も停止指令も送れません。ドライバの監視タイムアウトはプロセスとUARTが動作している間だけ有効であり、プロセス強制終了、USB抜去、OS停止時の確実な停止は保証しません。実運用では物理的な非常停止、電源遮断手段、監督プロセスを別途用意してください。
-
-単体テストは実機へ接続せず、注入した偽シリアルで実行できます。
-
-```bash
-python -m unittest -v tests.test_odometry tests.test_roomba_driver
-```
-
-ドライバ内のオドメトリは、最初のエンコーダ読み取りを基準値とし、2回目以降に姿勢を更新します。単位は位置がm、角度がradです。
-
-```python
-with RoombaDriver() as driver:
-    driver.read_odometry()  # 左右エンコーダの基準値を設定
-    pose = driver.read_odometry()
-    print(pose.x, pose.y, pose.theta)
-```
-
-### Roomba通信前のdry-run確認
-
-実機へは送信せず、`/cmd_vel_unstamped`を左右輪速度へ変換して確認できます。シミュレーターのコンテナシェルで起動します。
-
-統合経路の既定確認では、まず出力アダプターをdry-runモードで起動します。このモードは計算済みTwistを`/roomba/cmd_vel_dry_run`へ複製するだけで、実機ブリッジ入力`/roomba/cmd_vel_unstamped`へはpublishしません。
-
-```bash
-./simulation/sim.sh cmd-adapter dry_run /cmd_vel_unstamped
-# 別ターミナル
-./simulation/sim.sh shell
-ros2 topic echo /roomba/cmd_vel_dry_run
-```
-
-アダプターの`mode`は`dry_run`、`gazebo`、`roomba`の3値です。独立したNav出力`/nav/cmd_vel_unstamped`を使う場合は、Gazebo向けを`cmd-adapter gazebo /nav/cmd_vel_unstamped`、実機ブリッジ直前を`cmd-adapter roomba /nav/cmd_vel_unstamped`で切り替えます。`roomba`はトピック接続だけであり、ブリッジの`drive_enabled=false`やPico側ロックを解除しません。
-
-```bash
-/usr/local/bin/roomba-dry-run-adapter
-```
-
-別のコンテナシェルで、`[左輪 mm/s, 右輪 mm/s]`の順に確認します。
-
-```bash
-ros2 topic echo /roomba/wheel_speeds_dry_run
-```
-
-- 前進では左右輪が同じ値になります。
-- 正の`angular.z`（左旋回）では右輪が左輪より速くなります。
-- 100 mm/sを超える場合は、左右輪を同じ倍率で縮小します。
-- 指令が0.5秒途絶えると`[0.0, 0.0]`を配信し、古い値を再利用しません。
-- `Ctrl+C`で終了するときも`[0.0, 0.0]`を配信します。
-
-## 主なファイル
-
-- `roomba_driver.py`: Roomba 680のSafeモードUARTドライバと実機試験CLI
-- `odometry.py`: 16bitエンコーダの折り返しに対応した差動二輪オドメトリ
-- `vision.py`: Webカメラ画像のYOLO推論とJSON送信
-- `simulation/sim_camera_mjpeg.py`: 仮想固定カメラ画像のMJPEG配信
-- `simulation/models/demo_litter/model.sdf`: 仮想カメラ検証用のゴミモデル
-- `evaluate_sim_litter.py`: 既存YOLOによる仮想ゴミ評価と証跡保存
-- `collect_sim_camera_points.py`: Gazebo既知点の画素座標収集
-- `calibrate_sim_camera.py`: 仮想カメラ専用ホモグラフィの計算・検証
-- `calibrate_floor.py`: 4点クリックによる床面ホモグラフィ校正
-- `simulation/vision_turn_controller.py`: 検出座標の変換、Marker、到達判定、速度指令
-- `simulation/map_frame_adapter.py`: `odom`から`map`への姿勢・目標変換と静的TF
-- `simulation/roomba_dry_run_adapter.py`: 左右輪速度への変換と通信途絶停止の検証
-- `simulation/cmd_vel_output_adapter.py`: Nav出力のGazebo／実機ブリッジ／dry-run切替と途絶停止
-- `simulation/vision_controller.yaml`: 校正値と安全設定
-- `simulation/sim.sh`: シミュレーターの起動・停止・確認コマンド
-- `prepare_taco.py`: TACOデータセットの取得とYOLO形式への変換
-- `simulation/README.md`: シミュレーター構成の詳細
-
-ROS 2 Jazzy、Gazebo Harmonic、Create 3の出典と使用コミットは[simulation/README.md](simulation/README.md)に記載しています。
-
-### Pico W TCPブリッジ
-
-Pico W経由でRoomba 680へ接続する場合だけ、シミュレーター起動後に別ターミナルからブリッジを明示起動します。通常起動ではブリッジは起動せず、実機へ速度指令を送りません。
-
-Wi-Fiブリッジを配備するときは、[`pico/pico_relay.py`](pico/pico_relay.py)をPico W上へ`main.py`という名前で保存します。リポジトリ内の[`pico/main.py`](pico/main.py)は既存UARTプローブとして保存してあり、自動的には置換しません。SSIDとパスワードはPico Wへ保存するローカルコピーだけへ設定し、Gitへ追加しないでください。
-
-ホスト側は、Pico WがRoombaのOI初期化を完了して`READY`を返すまで指令を送信しません。接続直後と再接続直後にはSTOPを送信し、その接続上で新しいTwistを受信するまで停止を維持します。
-
-```bash
-# roomba_bridge_tcp.pyをDockerイメージへ反映
+\`\`\`bash
 ./simulation/sim.sh up
+./simulation/sim.sh status
+\`\`\`
 
-# 別ターミナルで、Pico W側に表示されたIPを指定
-# 既定はdrive_enabled=falseなので、READY確認とSTOP送信だけを行う
-./simulation/sim.sh roomba-tcp PICO_WのIPアドレス
-# ポートを変更する場合
-./simulation/sim.sh roomba-tcp PICO_WのIPアドレス 9000
-```
+VNC：\`http://localhost:6080/vnc.html?autoconnect=true&resize=scale\`。動画撮影やGazeboの詳細は[simulation/README.md](simulation/README.md)にまとめています。
 
-正常時はPico Wに`relay ready`、ROS 2側に`relay READY; STOP sent`を含む接続ログが表示されます。既定の実機専用入力は`/roomba/cmd_vel_unstamped`（`geometry_msgs/msg/Twist`）で、Create3用`/cmd_vel_unstamped`とは分離されています。`drive_enabled=false`では非ゼロ指令を受信してもSTOP以外を送信しません。終了時は`Ctrl+C`を押すと停止指令を送ってTCP接続を閉じます。
+### オドメトリdry-run（実機接続なし）
 
-Pico Wは500msのUART停止監視を維持します。TCP上の任意データでは監視時間を延長せず、opcode 145、固定長5バイト、左右速度がOI範囲内のDrive Directフレームを完全受信した場合だけ監視時刻を更新します。
+\`\`\`bash
+./simulation/sim.sh odometry-dryrun-e2e
+\`\`\`
 
-#### STOP限定の実機疎通試験
+結果は\`artifacts/odometry_dryrun/e2e/\`へ保存されます。これはPicoへのARM/Driveを送らない試験です。
 
-`sim.sh roomba-tcp`は、ノード側の既定値に依存せず、起動引数として`drive_enabled:=false`と`command_topic:=/roomba/cmd_vel_unstamped`を固定します。IPアドレスとポートだけを引数で変更できます。
+### ROS 2の状態確認
 
-実機接続前に次を確認します。
+\`\`\`bash
+./simulation/sim.sh ros-status
+\`\`\`
 
-- Roombaを床から浮かせるか、車輪が接地しない安定した台へ置く。
-- 直ちにCLEANボタンを押せる位置で作業する。
-- UART1のGP4→Roomba RX、GP5←Roomba TX、GND共通、適切なレベル変換を再確認する。
-- Pico Wのシェルで`Wi-Fi OK`と`listening on <IP>:<PORT>`を確認する。
-- ROS 2側で実機用の駆動許可ノードが他に起動していないことを確認する。
-- `git status`でSSIDまたはパスワードを含む配備用ファイルが追加されていないことを確認する。
+ROS環境が起動していることが前提です。トピックが見えることだけでは、Roombaへの出力やARM成功を意味しません。実機コマンドは各試験のrunbookに従い、READMEにある断片的な例を直接つないで運転しません。
 
-承認後に実行するSTOP限定コマンドは次のとおりです。このコマンド自体が実機へ接続するため、承認前には実行しません。
+## 11. 運用上の課題
 
-```bash
-# 既定ポート9000
-./simulation/sim.sh roomba-tcp PICO_W_IP
+### 実験の主導権
 
-# 任意ポート
-./simulation/sim.sh roomba-tcp PICO_W_IP 9000
-```
+実験者が目標・合否・実施タイミングを決め、Codex等は実装・回帰・ログ整理を支援する方針です。たとえば「60mm直進」を目的にしたとき、ACK再同期の完成をC3全体のゴールに置き換えず、補助成果として記録して元の目的へ戻ります。
 
-期待ログは次のとおりです。
+### 孤児ブリッジ
 
-```text
-# Pico W
-connected: (...)
-relay ready
+過去には中断された\`docker compose exec\`の後にSTOP専用ブリッジが残り、ARM購読者が重複しました。有人ブリッジの起動経路にはPID、\`flock\`、heartbeatがありますが、**診断を含むすべての起動方法が統一管理されているわけではありません**。
 
-# ROS 2
-Connected to Pico W 192.168.0.32:9000; relay READY; STOP sent
-STOP-only mode: drive_enabled=false; non-zero commands are disabled
-```
+将来はMacターミナルから一意の\`start/status/stop\`相当で操作し、リビルド前に残存ブリッジの有無を確認できる仕組みへ整理します。既存の起動時STOP/Safe診断を活用し、別ブリッジを何度も起動し直さない運用が目標です。
 
-別ターミナルで設定を確認できます。
+### 手順書の短縮
 
-```bash
-ros2 param get /roomba_bridge_tcp drive_enabled
-ros2 param get /roomba_bridge_tcp command_topic
-ros2 topic info -v /roomba/cmd_vel_unstamped
-```
+現場向けはA4一枚・最大5操作程度のクイックシートを基本とします。「Mac／コンテナ／Pico」の実行場所、実在するコマンド、期待出力、停止方法を明記。詳細な障害解析・状態遷移・回帰は技術資料へ分けます。手順書のタイポや実在しない引数は実コードとの照合で減らします。
 
-期待値は`drive_enabled: false`と`/roomba/cmd_vel_unstamped`です。終了時はブリッジ側で`Ctrl+C`を押します。正常ならホストがSTOPを送って切断し、Pico Wも切断処理でSTOPを送ります。ホストが応答しない場合はPico W側で`Ctrl+C`を押し、それでも停止を確認できない場合はRoombaのCLEANボタンで停止してください。Wi-Fi切断時はPico Wの500ms watchdogによる停止を待ちますが、Pico W自体の停止・電源断時はソフトウェア停止を保証できません。
+## 12. 実装予定・優先順位
 
-#### OIモードとSTOP到達の診断
-
-診断対応版の`pico_relay.py`を配備した後、承認を得てから次を実行します。通常の`roomba-tcp`と同様に`drive_enabled=false`および実機専用トピックが固定され、非ゼロDrive DirectはホストとPico Wの両方で拒否されます。
-
-```bash
-./simulation/sim.sh roomba-tcp-diagnostic 192.168.0.32 9000
-```
-
-診断プロトコルは任意UART転送ではありません。既存のDrive Direct固定長5バイトに加え、次の2種類だけを許可します。
-
-| TCP要求 | 用途 | UART操作 |
+| 優先 | 課題 | 次に確認すること |
 |---|---|---|
-| `D7 01` | STOP到達確認 | STOPを書き、センサ41/42を固定Query Listで読む |
-| `D7 02` | OIモード確認 | 先にSTOPを書き、センサ35だけを読む |
+| **P0** | C3通信の途絶 | 同一試行でmacOSパケット捕捉とPico/hostログを照合 |
+| **P0** | 左右旋回の実機Navigation | 左右輪符号、実際の旋回方向、ArUco yaw差 |
+| **P0** | ブリッジのライフサイクル | start/status/stop統一、孤児・多重起動防止 |
+| **P1** | 60mm前後の直進再現性 | 距離・指令時間・ACK継続性を独立評価 |
+| **P1** | 実機encoder 43/44 | 静止取得→Pico→TCP→ROS 2接続 |
+| **P1** | ArUco／オドメトリ比較 | 同一試験で距離・方位・時刻を比較 |
+| **P2** | YOLO検出途絶の復帰 | 停止維持と再認識・再許可を分離 |
+| **P2** | 画像の鮮度 | 撮影時刻・推論時間・通信遅延を区別 |
+| **P3** | 検出の一般化性能 | 未知背景・距離・照明・独立holdout |
+| **P3** | 長時間の無人走行・回収 | 別の仕様と実機検証が必要 |
 
-STOP ACKの状態ビットは、`0x01`がPicoでの受信・検証、`0x02`がUARTへの5バイト書込み、`0x04`がRoombaの要求右・左車輪速度センサが両方0だったことを示します。`0x07`かつ左右0の場合だけ成功です。期待ログは次のとおりです。
+**直近ロードマップ**
 
-```text
-Connected to Pico W 192.168.0.32:9000; relay READY; STOP sent
-STOP confirmed: host_sent=true, pico_validated=true, uart_written=true, roomba_requested_right=0, roomba_requested_left=0, ack=0x07
-Roomba OI mode: 2 (Safe)
-STOP-only mode: drive_enabled=false; non-zero commands are disabled
-```
+1. 実験ブリッジをMacから確実に操作できるようにし、古いプロセスの残存を防ぐ。
+2. 直進と左右旋回を独立に測定。指令の符号だけでなく物理的な方向・角度・距離を記録。
+3. packet 43/44を実機で取得し、ROS 2の既存Odometryノードへ流す。
+4. wheel odometryとArUco姿勢を比較し、滑り・ずれ・時刻誤差を評価する。
+5. ゴミを目標に姿勢更新しながら接近する閉ループを作る。
 
-OIモード値は`0=Off`、`1=Passive`、`2=Safe`、`3=Full`です。2以外はエラーログとし、走行は引き続き無効です。診断要求、ACK、センサー応答はPico Wの走行watchdogを延長しません。診断処理は最初にSTOPを送り、UART応答待ちは有限時間です。
+「まず動かす → 記録する → 問題を見つける → 最小限直す → 再試験する」という実機開発の反復を重視します。安全機構の追加それ自体を目的化しません。
 
-センサ41/42の0は、Roomba内部の「要求車輪速度」が0になったことを示す間接確認です。実際の車輪回転や床上速度を直接測定するものではありません。慣性による回転まで確認する場合は、エンコーダ43/44を時間差で読み、tick変化が停止したことを別途検証する必要があります。
+## 13. 資料・ファイル一覧
 
-## 既知座標による自律移動試験（第4段階A）
+| 資料 | 主な内容 |
+|---|---|
+| [ARCHITECTURE.md](ARCHITECTURE.md) | システム・ROSトピック構成 |
+| [LOCALIZATION_ARCHITECTURE.md](LOCALIZATION_ARCHITECTURE.md) | 座標系・位置推定 |
+| [docs/CAMERA_CALIBRATION_20261028.md](docs/CAMERA_CALIBRATION_20261028.md) | ArUco・床面較正 |
+| [ARM_TCP_RECOVERY_20261026.md](ARM_TCP_RECOVERY_20261026.md) | ARM ACK 0/7問題 |
+| [P3_2_DEADLINE_IO_SEPARATION_REPORT_20261029.md](P3_2_DEADLINE_IO_SEPARATION_REPORT_20261029.md) | 期限STOPと同期I/O |
+| [AI_ATTENDED_FLOOR_DEADLINE_REPORT_20261029.md](AI_ATTENDED_FLOOR_DEADLINE_REPORT_20261029.md) | AI連動有人実機結果 |
+| [ODOMETRY_DRYRUN_REPORT_20261027.md](ODOMETRY_DRYRUN_REPORT_20261027.md) | ROS 2模擬Odometry |
+| [WHEEL_MOTION_MONITOR_REPORT_20261029.md](WHEEL_MOTION_MONITOR_REPORT_20261029.md) | 観測用車輪監視 |
+| [docs/submission_2026/evidence_matrix.md](docs/submission_2026/evidence_matrix.md) | 実機／模擬／未検証の証拠 |
+| [docs/submission_2026/final_report_draft.md](docs/submission_2026/final_report_draft.md) | 提出レポート初稿 |
+| [simulation/README.md](simulation/README.md) | Create 3・Gazeboの操作 |
+| [pico/README.md](pico/README.md) | Pico側の説明 |
+| [PAI_SUBMISSION.md](PAI_SUBMISSION.md) | 旧版の撮影チュートリアル |
 
-YOLOを使わず、Gazeboの既知座標を入力して共通Navigationを検証できます。通常の`sim.sh up`では起動せず、次の明示的な手順だけで制御を有効化します。
+C3の最新詳細はユーザー提供のローカル\`C3_CONTINUOUS_FLOOR_RESULTS_20261030.md\`、\`C3_TCP_ACK_DELIVERY_INVESTIGATION_20261030.md\`、\`C3_REAL_ACK_RECONCILIATION_RESULT_20261030.md\`。GitHubへ反映されたら相対リンクを更新してください。
 
-```bash
-./simulation/sim.sh nav-test-up
-./simulation/sim.sh known-target-test
-```
+主要コード：\`vision.py\`、\`simulation/vision_turn_controller.py\`、\`simulation/cmd_vel_output_adapter.py\`、\`simulation/roomba_bridge_tcp.py\`、\`simulation/roomba_tcp_transport.py\`、\`pico/main.py\`、\`odometry.py\`、\`simulation/wheel_odometry_node.py\`、\`simulation/sim.sh\`。
 
-テスト入力は`odom`座標系の`/litter/target_odom`へ送ります。`map_frame_adapter`が`/litter/target`へ変換するため、通常の目標経路と競合せず、`vision_turn_controller`の制御計算をそのまま通ります。試験前に仮想カメラ用ホモグラフィの検証点誤差、初期安全フラグ、最高速度0.08 m/s以下を検査します。
+## 14. 証拠の扱い
 
-シミュレーション専用設定では到達判定に1 mmの`arrival_epsilon`を使用します。比例速度が到達半径へ漸近して停止する数値境界だけを吸収する設定で、通常設定は`arrival_epsilon=0.0`のため従来動作です。到達後は同一目標に対する到達状態を保持し、ゼロ速度を明示的に配信し続けます。
+実験結果は必要に応じ\`MOTION\`、\`DISTANCE\`、\`ARM-CONTINUITY\`、\`TRANSPORT-CONTINUITY\`、\`FAILSAFE\`を独立に判定します。未保存・未実施の測定は\`UNKNOWN\`です。
 
-結果は`artifacts/known_target_test/result.json`へ保存されます。初期・目標・最終姿勢、軌跡、最終位置誤差、旋回・前進・到達・停止、入力タイムアウト停止、停止理由を含みます。例外終了時の停止も別に確認できます（このコマンドは意図どおり非0で終了します）。
+\`Drive ACK 0x03\`はUART書込みの成立、\`STOP ACK 0x07\`はSTOP要求検証・UART書込み・要求速度0を示します。ただし物理停止・床面移動量をそれだけで確定できません。ホストとPicoは別の単調時計を使うため、同じ時計内の差分で評価し、絶対値を直接差し引きません。
 
-```bash
-./simulation/sim.sh nav-test-up
-./simulation/sim.sh known-target-abort-test
-```
+56mm進んだ事実と、通信継続が失敗した事実をどちらも残します。試験の一部がFAILでも、実測で成立した部分を消さず、失敗もなかったことにしません。**実測に基づいて次の実験へ進むこと**が、このプロジェクトの開発方針です。
 
-どちらも終了処理で`control_enabled=false`、`calibration_ready=false`へ戻し、ゼロ速度を送信します。この試験はYOLO認識の成功を示すものではなく、Roomba 680へは接続しません。通常環境へ戻すには`./simulation/sim.sh up`を実行します。
+---
 
-前後振動を読み取り専用で記録する場合は、専用試験を開始した別ターミナルで次を実行します。
-
-```bash
-./simulation/sim.sh oscillation-diagnostics 190
-```
-
-`/cmd_vel_unstamped`、`/cmd_vel`、`/diffdrive_controller/cmd_vel`、`/odom`、`/hazard_detection`を同一の単調時計基準で記録し、`artifacts/oscillation_diagnostics/`へJSONL、ROSグラフ、反転一覧を保存します。この診断ノードはPublisherを持ちません。
-
-## 複数目標への自律追従試験（第4段階B）
-
-複数の既知目標を順番に追従する試験も、自由空間配置でのみ明示的に実行します。
-
-```bash
-./simulation/sim.sh nav-test-up
-./simulation/sim.sh multi-target-test
-```
-
-試験中は実カメラ検出との競合を避けるため、試験専用コンテナ内の`webcam-bridge`を停止します。A・Bの到達、同一目標再配信時のラッチ保持、新目標でのラッチ解除、各到達後2.2秒のゼロ速度、入力タイムアウト、安全フラグの後処理を検証します。結果は`artifacts/multi_target_test/result.json`と`REPORT.md`へ保存されます。
-# Gazebo YOLOパイロット学習（Google Colab）
-
-学習はMacでは実行せず、MacはGazebo画像・YOLOラベルの生成とZIP作成だけを担当します。
-
-```bash
-./simulation/sim.sh vision-integration-up
-.venv/bin/python build_gazebo_litter_dataset.py
-./simulation/sim.sh stop
-.venv/bin/python package_gazebo_litter_colab.py
-```
-
-生成物は `artifacts/gazebo_litter_pilot_colab.zip` です。このZIPと
-`notebooks/gazebo_litter_pilot_colab.ipynb` をGoogle Driveの
-`MyDrive/robot-1-colab/`へアップロードしてください。ZIPにはデータセット、評価スクリプト、
-既存重みのコピー `weights/original_best.pt` が含まれます。元の
-`runs/detect/taco/weights/best.pt`は変更されません。
-
-ColabではランタイムをGPUへ変更し、ノートブックを上から順に実行します。既定値は
-`imgsz=640`、`batch=8`、`epochs=50`、`patience=10`、`seed=42`、`device=0`です。
-CUDAメモリ不足の場合だけbatchを8→4→2の順に下げます。各epochの`last.pt`はDriveへ
-保存され、ノートブック内の再開セルから`resume=True`で再開できます。
-
-完了後、Drive上の`gazebo_litter_pilot_result.zip`をMacへ戻してください。ZIPには
-`weights/best.pt`、`weights/last.pt`、学習曲線、固定test holdoutでの旧新モデル比較が
-含まれます。Navigationを有効にする前に比較結果を確認してください。
+**現在地：** AI認識からの限定有人実機駆動は達成。C3では同一ARMの1秒超駆動と56mm直進を報告しましたが、通信の連続性、左右旋回の実測、実オドメトリは未完成です。次は「ブリッジ操作の簡素化」「旋回・距離の計測」「encoderのROS 2統合」を進めます。
