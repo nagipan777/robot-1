@@ -8,13 +8,13 @@
 
 0. **事前に**Roomba/Picoのプログラム版・無通電時の設定・STOP/Safe診断と他ブリッジの不存在を既存手順で確認し、対象試行の個別承認を得る。Picoを手動起床し、実験者が動きを監視する。コンテナは起動済みであること。
 
-1. **走行前**：`./tools/odom2b1.sh before PICO_IP`
+1. **走行前**：`bash tools/odom2b1.sh before PICO_IP`
    - STOP-first encoder10件を保存。失敗したら走行せず終了。
-2. **有人試験**：`./tools/odom2b1.sh approve` で承認を記録後、**既存の検証済み試験ランチャーを別途使用**。このスクリプトはDriveを発行しない。試行終了後、両輪の物理停止と再発進なしを確認。
-3. **走行後**：`./tools/odom2b1.sh after PICO_IP MEASURED_MM`
+2. **有人試験**：`bash tools/odom2b1.sh approve` で承認を記録後、**既存の検証済み試験ランチャーを別途使用**。このスクリプトはDriveを発行しない。試行終了後、両輪の物理停止と再発進なしを確認。
+3. **走行後**：`bash tools/odom2b1.sh after PICO_IP MEASURED_MM`
    - 例：`MEASURED_MM=0`は実測が本当に0mmの場合のみ。
    - `PHYSICAL_STOP_CONFIRMED`の入力後、STOP-firstでencoderを取り、距離・yaw差分をCSV保存。
-4. **結果**：`./tools/odom2b1.sh status` で`result.csv`の場所を確認。次回は`./tools/odom2b1.sh new-session`でポインタだけをクリア。
+4. **結果**：`bash tools/odom2b1.sh status` で`result.csv`の場所を確認。次回は`bash tools/odom2b1.sh new-session`でポインタだけをクリア。
 
 **手順の制約**：before→afterの間にRoombaを電源再投入しない。走行中のencoder取得を行わない。別のTCP所有者がある場合は開始しない。通信エラー時に自動再ARM・Drive再送はしない。
 
