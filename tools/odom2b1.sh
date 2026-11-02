@@ -13,12 +13,12 @@ usage() {
   cat <<'EOF'
 Roomba Phase 2B-1 — encoder measurement only (Mac terminal)
 
-  ./tools/odom2b1.sh before PICO_IP
-  ./tools/odom2b1.sh approve
+  bash tools/odom2b1.sh before PICO_IP
+  bash tools/odom2b1.sh approve
   # Run separately approved bounded Drive using the existing test launcher.
-  ./tools/odom2b1.sh after PICO_IP MEASURED_MM
-  ./tools/odom2b1.sh status
-  ./tools/odom2b1.sh new-session
+  bash tools/odom2b1.sh after PICO_IP MEASURED_MM
+  bash tools/odom2b1.sh status
+  bash tools/odom2b1.sh new-session
 
 This script never sends ARM or Drive. It does request STOP-first encoder diagnostics.
 An existing simulator container and explicitly supervised, stationary Roomba are required.
@@ -27,7 +27,7 @@ EOF
 }
 active_dir() {
   if [[ ! -f "$ACTIVE" ]]; then
-    echo "No active session. Run: ./tools/odom2b1.sh before PICO_IP" >&2
+    echo "No active session. Run: bash tools/odom2b1.sh before PICO_IP" >&2
     exit 2
   fi
   local dir
@@ -83,7 +83,7 @@ case "${1:-help}" in
       --session "$session/interval.json" --motion-label "phase2b1_attended_straight"
     printf '%s\n' "$session" > "$ACTIVE"
     printf '\nBEFORE complete: %s\n' "$session"
-    echo "Next: obtain separate approval for Drive, then ./tools/odom2b1.sh approve"
+    echo "Next: obtain separate approval for Drive, then bash tools/odom2b1.sh approve"
     ;;
   approve)
     [[ "$#" == 1 ]] || { usage; exit 2; }
